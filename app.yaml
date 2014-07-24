@@ -1,0 +1,32 @@
+application: crmapidemo
+version: 1
+runtime: python27
+api_version: 1
+threadsafe: yes
+
+handlers:
+- url: /favicon.ico
+  static_files: favicon.ico
+  upload: favicon\.icos
+  
+- url: /bootstrap
+  static_dir: bootstrap
+  
+- url: /bootstrap/css
+  static_dir: bootstrap/css
+
+- url: /bootstrap/ico
+  static_dir: bootstrap/ico
+
+- url: /bootstrap/img
+  static_dir: bootstrap/img
+
+- url: /bootstrap/js
+  static_dir: bootstrap/js
+
+- url: .*
+  script: main.app
+
+libraries:
+- name: webapp2
+  version: "2.5.2"
