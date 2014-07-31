@@ -87,6 +87,13 @@ class RequestInformationHandler(webapp2.RequestHandler):
         contact = i.addContact(contact)
         
         if self.request.get('addtask') == 'y':
+            tasklinks = list()
+            tl = dict(
+                TASK_LINK_ID = 0,
+                CONTACT_ID = contact['CONTACT_ID'],
+            )
+            tasklinks.append(tl)
+            
             task = dict(
                 Title = 'Follow up with ' + self.request.get('FIRST_NAME') + ' ' + self.request.get('LAST_NAME'),
                 PRIORITY = 2,
@@ -96,6 +103,7 @@ class RequestInformationHandler(webapp2.RequestHandler):
                 VISIBLE_TO = 'EVERYONE',
                 PUBLICLY_VISIBLE = True,
                 RESPONSIBLE_USER_ID = i.owner_id,
+                TASKLINKS = tasklinks,
             )
             task = i.addTask(task)
         self.redirect('/thankyou')
