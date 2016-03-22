@@ -1,528 +1,487 @@
+#!/usr/bin/env python
+# -*- coding: UTF-8 -*-
 #
-# NOTE to .NET developers, it is best if you edit this file in a Python aware IDE. Komodo IDE is a good choice. .NET tends to break
-# indentation in Python fields, which will cause bugs.
 #
-# Python client library for v2.1 Insightly API
+# Python client library for v2.1/v2.2 Insightly API
+# Supports both Python v2.7 and 3.x
 # Brian McConnell <brian@insight.ly>
 #
-
 import base64
+import datetime
 import json
+import mimetypes
 import string
+import sys
+import traceback
 import urllib
-import urllib2
+import zlib
+
+try:
+    import urllib.request as urllib2
+    from urllib.parse import urlencode
+except ImportError:
+    import urllib2
+    from urllib import urlencode
+    
+def lowercase(text):
+    try:
+        lc = text.lower()
+    except:
+        lc = string.lower(text)
+    return lc
+
+def encode_query(text):
+    qs = ''
+    for t in text:
+        c = ord(t)
+        if c < 128:
+            qs += t
+        else:
+            h = hex(c).replace('0x','')
+            qs += '%u' + h
+    return qs
 
 class Insightly():
     """
-    Insightly Python library for Insightly API
+    Insightly Python library for Insightly API v2.2
     Brian McConnell <brian@insight.ly>
    
-    This library provides user friendly access to the version 2.1 REST API for Insightly. The library provides several services, including:
+    This library provides user friendly access to the versions 2.2 of the REST API for Insightly. The library provides several services, including:
    
     * HTTPS request generation
     * Data type validation
-    * Required field validation
    
     The library is built using Python standard libraries (no third party tools required, so it will run out of the box on most Python
     environments, including Google App Engine). The wrapper functions return native Python objects, typically dictionaries, or lists of
-    dictionaries, so working with them is easily done using built in functions. 
+    dictionaries, so working with them is easily done using built in functions.
+    
+    The version 2.2 API adds several new endpoints which make it easy to make incremental changes to existing Insightly objects, such
+    as to add a phone number to a contact, and also more closely mirrors the functionality available in the web app (such as the
+    ability to follow and unfollow objects.s)
+    
+    API DOCUMENTATION
+    
+    Full API documentation and an interactive sandbox is available at https://api.insight.ly/v2.2/Help
+    
+    IMPORTANT NOTE
+    
+    This version of the client library is not backward compatible with the previous version. In order to simplify the code base, and
+    enable better test coverage, this library is organized around a small number of general purpose methods that implement create,
+    read, update and delete functionality generically. The previous version of the library has one method per endpoint, per HTTP method,
+    which grew unwieldy with the addition of many new endpoints in v2.1
+    
+    INSTALLATION
+    
+    Just copy the files in this project into your working directory, if you don't plan to run test suites, you only need the insightly.py
+    file. insightlytest.py and apollo17.jpg are used for testing. The file insightlyexamples.py will be used to highlight short examples
+    of simple integrations. 
    
-    USAGE:
-   
-    Simply include insightly.py in your project file, then do the following for to run a test suite:
-   
-    from insightly import Insightly
-    i = Insightly(apikey='your API key')
-    users = i.test()
-   
-    This will run an automatic test suite against your Insightly account. If the methods you need all pass, you're good to go!
-   
+    USAGE
+    
     If you are working with very large recordsets, you should use ODATA filters to access data in smaller chunks. This is a good idea in
-    general to minimize server response times.
+    general to minimize server response times. This is no longer an issue with version 2.2, which returns paginated results that you
+    can page through using the optional top and skip parameters.
    
     BASIC USE PATTERNS:
-   
-    CREATE/UPDATE ACTIONS
-   
-    These methods expect a dictionary containing valid data fields for the object. They will return a dictionary containing the object
-    as stored on the server (if successful) or raise an exception if the create/update request fails. You indicate whether you want to
-    create a new item by setting the record id to 0 or omitting it.
-   
-    To obtain sample objects, you can do the following:
-   
-    contact = i.addContact('sample')
-    event = i.addEvent('sample')
-    organization = i.addOrganization('sample')
-    project = i.addProject('sample')
-   
-    This will return a random item from your account, so you can see what fields are required, along with representative field values.
-   
-    SEARCH ACTIONS
-   
-    These methods return a list of dictionaries containing the matching items. For example to request a list of all contacts, you call:
-    i = Insightly(apikey='your API key')
-    contacts = i.getContacts()
-   
-    SEARCH ACTIONS USING ODATA
-   
-    Search methods recognize top, skip, orderby and filters parameters, which you can use to page, order and filter recordsets.
-   
-    contacts = i.getContacts(top=200) # returns the top 200 contacts
-    contacts = i.getContacts(orderby='FIRST_NAME desc', top=200) # returns the top 200 contacts, with first name descending order
-    contacts = i.getContacts(top=200, skip=200) # return 200 records, after skipping the first 200 records
-    contacts = i.getContacts(filters=['FIRST_NAME=\'Brian\''])    # get contacts where FIRST_NAME='Brian'
-   
-    IMPORTANT NOTE: when using OData filters, be sure to include escaped quotes around the search term, otherwise you will get a
-    400 (bad request) error
-   
-    These methods will raise an exception if the lookup fails, or return a list of dictionaries if successful, or an empty list if no
-    records were found.
-   
-    READ ACTIONS (SINGLE ITEM)
-   
-    These methods will return a single dictionary containing the requested item's details.
-    e.g. contact = i.getContact(123456)
-   
-    DELETE ACTIONS
-   
-    These methods will return True if successful, or raise an exception.
-    e.g. success = i.deleteContact(123456)
-   
-    IMAGE AND FILE ATTACHMENT MANAGEMENT
-   
-    The API calls to manage images and file attachments have not yet been implemented in the Python library. However you can access
-    these directly via our REST API
-   
-    ISSUES TO BE AWARE OF
-   
-    This library makes it easy to integrate with Insightly, and by automating HTTPS requests for you, eliminates the most common causes
-    of user issues. That said, the service is picky about rejecting requests that do not have required fields, or have invalid field values
-    (such as an invalid USER_ID). When this happens, you'll get a 400 (bad request) error. Your best bet at this point is to consult the
-    API documentation and look at the required request data.
-   
-    Write/update methods also have a dummy feature that returns sample objects that you can use as a starting point. For example, to
-    obtain a sample task object, just call:
-   
-    task = i.addTask('sample')
-   
-    This will return one of the tasks from your Insightly account, so you can get a sense of the fields and values used.
-   
-    If you are working with large recordsets, we strongly recommend that you use ODATA functions, such as top and skip to page through
-    recordsets rather than trying to fetch entire recordsets in one go. This both improves client/server communication, but also minimizes
-    memory requirements on your end.
-    """
-    def __init__(self, apikey=''):
-	"""
-	Instantiates the class, logs in, and fetches the current list of users. Also identifies the account owner's user ID, which
-	is a required field for some actions. This is stored in the property Insightly.owner_id
-
-	Raises an exception if login or call to getUsers() fails, most likely due to an invalid or missing API key
-	"""
-        self.apikey = apikey
-        self.baseurl = 'https://api.insight.ly'
-        self.users = self.getUsers()
-        print 'CONNECTED: found ' + str(len(self.users)) + ' users'
-        for u in self.users:
-            if u.get('ACCOUNT_OWNER', False):
-                self.owner_email = u.get('EMAIL_ADDRESS','')
-                self.owner_id = u.get('USER_ID', None)
-                self.owner_name = u.get('FIRST_NAME','') + ' ' + u.get('LAST_NAME','')
-                print 'The account owner is ' + self.owner_name + ' [' + str(self.owner_id) + '] at ' + self.owner_email
-                break
-                
-    def getMethods(self):
-        """
-        Returns a list of the callable methods in this library.
-        """
-        methods = [method for method in dir(self) if callable(getattr(self, method))]
-        return methods
     
-    def test(self, top=None):
+    i = Insightly(apikey = 'foozlebarzle', version=2.1)
+    projects = i.read('projects', top=50, filters={'email':'foo@bar.com'})
+    print 'Found ' + str(len(projects)) + ' projects'
+    
+    The create() function enables you to create an Insightly object, call it as follows:
+        object_graph = i.create(endpoint, object_graph)
+        where object graph is a dictionary
+        for example:
+        
+        contact = i.create('contacts',{'FIRST_NAME':'Foo','LAST_NAME':'Bar'})
+    
+    The create_child() function enables you to add a child object, for example to add an address to a contact, use it as follows:
+        object_graph = i.create_child(endpoint, object_graph)
+        for example:
+        
+        address = i.create_child('contacts',contact_id,'addresses',{'CITY':'San Francisco','STATE':'CA','ADDRESS_TYPE':'Home'})
+
+    The delete() function enables you to delete Insightly objects and child objects, use it as follows:
+        success = i.delete('contacts', contact_id)
+        success = i.delete('contacts', contact_id, sub_type='addresses', sub_type_id=address_id)
+        
+    The get() function returns a single Python dictionary or None for a specific identified record. Use as follows:
+        contact = i.get('contacts', contact_id)
+
+    The read() function enables you to get/find Insightly objects, with optional pagination and search terms, use as follows:
+        contacts = i.read('contacts')
+        contacts = i.read('contacts', top=100, skip=500) # get 100 records after skipping 500
+    
+    The search() function is used to do server filtered searches, use as follows:
+        contacts = i.search('contacts', 'email=foo.com', top=100, skip=200)
+    
+    The update() function enables you to update an existing Insightly object, use this as follows:
+        project = i.update('projects', project)        # where project is a dictionary containing the object graph
+    
+    The upload() function enables you to upload a file to endpoints that accept file attachments, use this as follows:
+        upload('opportunities', opportunity_id, 'apollo17.jpg')
+    
+    The upload_image() function enables you to upload an image for a contact, organization, project or opportunity
+        upload('contacts', contact_id, 'apollo17.jpg')
+        
+    ENDPOINTS
+    
+    The helper functions work with all endpoints in the API documentation. For example, to get a list of pipelines, you'd call
+    
+    pipelines = i.read('pipelines')
+    
+    See insightlytest.py for examples of how the endpoints are called (the automated test suite covers nearly all endpoints in the API)
+
+    AUTOMATED TEST SUITE
+    
+    The library includes a comprehensive automated test suite, which can be found in insightlytest.py
+    
+    To run a test suite, using the following code:
+    
+        from insightlytest import test
+        test()
+    
+    The program will test most API endpoints with sample data and report results to the console, as well as write
+    them out to the file testresults.txt
+    
+    INTERACTIVE DOCUMENTATION
+    
+    Use Python's built in help() function to pull up documentation for individual methods.
+    
+    For API documentation and interactive sandbox, go to https://api.insight.ly/v2.2/Help
+    
+    TROUBLESHOOTING TIPS
+    
+    One of the main issues API users run into during write/update operations is a 400 error (bad request) due to missing required fields.
+    If you are unclear about what the server is expecting, a good way to troubleshoot this is to do the following:
+    
+    * Using the web interface, create the object in question (contact, project, team, etc), and add sample data and child elements to it
+    * Use the corresponding read() method to get this object
+    * Inspect the object's contents and structure (it will be returned as a Python dictionary)
+    
+    If you get stuck, we highly recommend downloading the Postman extension for Chrome. You can use it to manually generate requests
+    and view the server response. It is very helpful in troubleshooting REST API integrations with systems like ours.
+    
+    Read operations via the API are generally quite straightforward, so if you get struck on a write operation, this is a good workaround,
+    as you are probably just missing a required field or using an invalid element ID when referring to something such as a link to a contact.
+    
+    """
+    def __init__(self, apikey='', version='2.2', dev=None, gzip=True, debug=True, test=False):
+        
         """
-        This helper function runs a test suite against the API to verify the API and client side methods are working normally. This may not reveal all corner cases, but will do a basic sanity check against the system.
+        Instantiates the class, logs in, and fetches the current list of users. Also identifies the account owner's user ID, which
+        is a required field for some actions. This is stored in the property Insightly.owner_id
+        
+        gzip compression is enabled by default, the client library will try to decompress return results, with fallback to plaintext
+        if the server is ignoring compression requests (this reduces payload size by about 10:1 when active)
+
+        Raises an exception if login or call to getUsers() fails, most likely due to an invalid or missing API key
+        """
+        
+        try:
+            self.log_file = open(str(version) + '.txt','w')
+        except:
+            self.log_file = None
+        
+        self.debug = debug
+        if gzip:
+            self.gzip = True
+        else:
+            self.gzip = False
+        if test:
+            self.test = True
+        else:
+            self.test = False
+        
+        self.version = str(version)
+        if dev is not None:
+            self.domain = dev
+            self.baseurl = dev
+        else:
+            if version == 'mobile':
+                self.domain = 'https://mobileapi.insightly.com'
+                self.baseurl = self.domain
+            else:
+                self.domain = 'https://api.insight.ly/v'
+                self.baseurl = self.domain + self.version
+        try:
+            self.filehandle = open('testresults.txt','w')
+        except:
+            self.filehandle = None
+        self.test_data = dict()
+        self.test_failures = list()
+        self.slow_endpoints = list()
+        if len(apikey) < 1:
+            try:
+                f = open('apikey.txt', 'r')
+                apikey = f.read()
+                if self.debug:        print('API Key read from disk as ' + apikey)
+            except:
+                raise Exception('No API provided on instantiation, and apikey.txt file not found in project directory.')
+        version = str(version)
+        self.version = version
+        self.swagger = None
+        if version == '2.2' or version == '2.1' or version == 'mobile':
+            self.alt_header = 'Basic '
+            self.apikey = apikey
+            self.tests_run = 0
+            self.tests_passed = 0
+            self.users = self.read('users')
+            self.version = version
+            if self.debug:        print('CONNECTED: found ' + str(len(self.users)) + ' users')
+            for u in self.users:
+                if u.get('ACCOUNT_OWNER', False):
+                    self.owner_email = u.get('EMAIL_ADDRESS','')
+                    self.owner_id = u.get('USER_ID', None)
+                    self.owner_name = u.get('FIRST_NAME','') + ' ' + u.get('LAST_NAME','')
+                    if self.debug:        print('The account owner is ' + self.owner_name + ' [' + str(self.owner_id) + '] at ' + self.owner_email)
+                    break
+        else:
+            raise Exception('Python library only supports v2.1 or v2.2 APIs. We recommend using v2.2.')
+        
+    def check_difference(self, new, old):
+        """
+        This function checks to see if the list of keys in a new object graph differs
+        from the list in the old object graph. This is used to detect situations where
+        a field is not saved or updated for some reason.
+        """
+        if type(new) is dict and type(old) is dict:
+            diff_keys=list()
+            oldkeys = old.keys()
+            newkeys = new.keys()
+            for k in oldkeys:
+                if new.get(k,'') != old[k]:
+                    diff_keys.append(k)
+            if len(diff_keys) > 0:
+                self.printline('    DELTA:  ' + str(diff_keys) + ' fields mismatch')
+                self.printline('    POSTED: ' + str(old))
+                self.printline('    RECVD:  ' + str(new))
+            return diff_keys
+        return []
+    
+    def create(self, object_type, object_graph, id = None, sub_type = None):
+        """
+        This is a general purpose write method that can be used to create (POST)
+        Insightly objects.
         
         USAGE:
         
         i = Insightly()
-        i.test(top=500)         # run test suite, limit search methods to return first 500 records
-        i.test(top=None)        # run test suite, with no limit on number of records returned by search functions   
+        new_lead = {'first_name':'foo','last_name':'bar'}
+        lead = i.create('leads',new_lead)
+        print str(lead)
+        
         """
-        
-        print "Testing API ....."
-        
-        print "Testing authentication"
-        
-        passed = 0
-        failed = 0
-        
-        currencies = self.getCurrencies()
-        if len(currencies) > 0:
-            print "Authentication passed... "
-            passed += 1
+        test = self.test
+        object_type = lowercase(object_type)
+        if type(object_graph) is dict:
+            data = json.dumps(object_graph)
+            url = '/' + object_type
+            if id is not None:
+                url += '/' + str(id)
+                if sub_type is not None:
+                    url += '/' + sub_type
+            if test:
+                self.tests_run += 1
+                try:
+                    self.generateRequest(url, 'POST', data, alt_auth = 'borkborkborkborkbork')
+                    self.printline('FAIL: POST w/ bad auth ' + url)
+                except:
+                    self.tests_passed += 1
+                    self.printline('PASS: POST w/ bad auth ' + url)
+            if test:
+                self.tests_run += 1
+                start_time = datetime.datetime.now()
+                try:
+                    try:
+                        text = self.generateRequest(url, 'POST', data).decode()
+                    except:
+                        text = self.generateRequest(url, 'POST', data)
+                    data = json.loads(text)
+                    self.tests_passed += 1
+                    end_time = datetime.datetime.now()
+                    td = end_time - start_time
+                    elapsed_time = td.total_seconds()
+                    self.printline('PASS: POST ' + url)
+                    self.log(True, url, 'POST', str(elapsed_time))
+                    delta = self.check_difference(data, object_graph)
+                    return data
+                except:
+                    end_time = datetime.datetime.now()
+                    td = end_time - start_time
+                    elapsed_time = td.total_seconds()
+                    self.log(False, url, 'POST', str(elapsed_time))
+                    self.printline('FAIL: POST ' + url)
+                    self.printline('    TRACE: ' + traceback.format_exc())
+            else:
+                text = self.generateRequest(url, 'POST', data)
+                data = json.loads(text)
+                return data
         else:
-            failed += 1
-        # Test getUsers(), /v2.1/Users, also get root user to use in testing write/update calls
-        # Test getUsers(), /v2.1/Users
-        try:
-            users = self.getUsers()
-            user = users[0]
-            user_id = user['USER_ID']
-            print "PASS: getUsers(), found " + str(len(users)) + " users."
-            passed += 1
-        except:
-            user = None
-            users = None
-            user_id = None
-            print "FAIL: getUsers()"
-            failed += 1
-        #
-        # getContacts
-        try:
-            contacts = self.getContacts(orderby='DATE_UPDATED_UTC desc', top=top)
-            contact = contacts[0]
-            print 'PASS: getContacts(), found ' + str(len(contacts)) + ' contacts.'
-        except:
-            contact = None
-            print 'FAIL: getContacts()'
-        if contact is not None:
-            contact_id = contact['CONTACT_ID']
-            try:
-                emails = self.getContactEmails(contact_id)
-                print 'PASS: getContactEmails(), found ' + str(len(emails)) + ' emails for random contact.'
-            except:
-                print 'FAIL: getContactEmails()'
-                
-            try:
-                notes = self.getContactNotes(contact_id)
-                print 'PASS: getContactNotes(), found ' + str(len(notes)) + ' notes for random contact.'
-            except:
-                print 'FAIL: getContactNotes()'
-                
-            try:
-                tasks = self.getContactTasks(contact_id)
-                print 'PASS: getContactTasks(), found ' + str(len(tasks)) + ' tasks for random contact.'
-            except:
-                print 'FAIL: getContactTasks()'
-            
-        # Test addContact(), /v2.1/Contacts
-        try:
-            contact = dict(
-                SALUTATION = 'Mr',
-                FIRST_NAME = 'Testy',
-                LAST_NAME = 'McTesterson',
-            )
-            contact = self.addContact(contact)
-            print "PASS: addContact()"
-            try:
-                self.deleteContact(contact['CONTACT_ID'])
-                print 'PASS: deleteContact()'
-            except:
-                print 'FAIL: deleteContact()'
-        except:
-            contact = None
-            print "FAIL: addContact()"
-                    
-        # Test getCountries(), /v2.1/Countries
-        try:
-            countries = self.getCountries()
-            print 'PASS: getCountries(), found ' + str(len(countries)) + ' countries.'
-        except:
-            print 'FAIL: getCountries()'
-            
-        # Test getCurrencies(), /v2.1/Currencies
-        try:
-            currencies = self.getCurrencies()
-            print 'PASS: getCurrencies(), found ' + str(len(currencies)) + ' currencies.'
-        except:
-            print 'FAIL: getCurrencies()'
-            
-        # Test getCustomFields(), /v2.1/CustomFields
-        try:
-            customfields = self.getCustomFields()
-            print 'PASS: getCustomFields(), found ' + str(len(customfields)) + ' custom fields.'
-        except:
-            print 'FAIL: getCustomFields()'
-            
-        # Test getEmails(), /v2.1/Emails
-        try:
-            emails = self.getEmails(top=top)
-            print 'PASS: getEmails(), found ' + str(len(emails)) + ' emails.'
-        except:
-            print 'FAIL: getEmails()'
-            
-        # Try getEmail(), /v2.1/Emails/{id}
-        pass
-    
-        # Test getEvents(), /v2.1/Events
-        try:
-            events = self.getEvents(top=top)
-            print 'PASS: getEvents(), found ' + str(len(events)) + ' events.'
-        except:
-            print 'FAIL: getEvents()'
+            raise Exception('object_graph must be a Python dictionary')
         
-        # Test addEvent(), /2.1/Events
-        try:
-            event = dict(
-                TITLE = 'Test Event',
-                LOCATION = 'Somewhere',
-                DETAILS = 'Details',
-                START_DATE_UTC = '2014-07-12 12:00:00',
-                END_DATE_UTC = '2014-07-12 13:00:00',
-                OWNER_USER_ID = user_id,
-                ALL_DAY = False,
-                PUBLICLY_VISIBLE = True,
-            )
-            event = self.addEvent(event)
-            print 'PASS: addEvent()'
-        except:
-            event = None
-            print 'FAIL: addEvent()'
-            
-        # Test deleteEvent(), /v2.1/Events
-        if event is not None:
-            try:
-                self.deleteEvent(event['EVENT_ID'])
-                print "PASS: deleteEvent()"
-            except:
-                print "FAIL: deleteEvent()"
-                
-        # Test getFileCategories(), /v2.1/FileCategories
-        try:
-            categories = self.getFileCategories()
-            print 'PASS: getFileCategories(), found ' + str(len(categories)) + ' file categories.'
-        except:
-            print 'FAIL: getFileCategories()'
-            
-        # Test addFileCategory()
-        try:
-            category = dict(
-                CATEGORY_NAME = 'Test Category',
-                ACTIVE = True,
-                BACKGROUND_COLOR = '000000',
-            )
-            category = self.addFileCategory(category)
-            print 'PASS: addFileCategory()'
-        except:
-            category = None
-            print 'FAIL: addFileCategory()'
-            
-        try:
-            if category is not None:
-                self.deleteFileCategory(category['CATEGORY_ID'])
-                print 'PASS: deleteFileCategory()'
-        except:
-            print 'FAIL: deleteFileCategory()'
+    def create_child(self, object_type, id, sub_type, object_graph):
+        """
+        This method is used to append a child element, such as a link, to an existing object
         
-        # Test getNotes(), /v2.1/Notes
-        try:
-            notes = self.getNotes()
-            print 'PASS: getNotes(), found ' + str(len(notes)) + ' notes.'
-        except:
-            print 'FAIL: getNotes()'
-            
-            
-        # Test getOpportunities(), /v2.1/Opportunities
-        try:
-            opportunities = self.getOpportunities(orderby='DATE_UPDATED_UTC desc', top=top)
-            print 'PASS: getOpportunities(), found ' + str(len(opportunities)) + ' opportunities.'
-            opportunity = opportunities[0]
-        except:
-            opportunity = None
-            print 'FAIL: getOpportunities()'
-            
-        # Test getOpportunityCategories(), /v2.1/OpportunityCategories
-        try:
-            categories = self.getOpportunityCategories()
-            print 'PASS: getOpportunityCategories(), found ' + str(len(categories)) + ' categories.'
-        except:
-            print 'FAIL: getOpportunityCategories()'
-            
-        # Test addOpportunityCategory()
-        try:
-            category = dict(
-                CATEGORY_NAME = 'Test Category',
-                ACTIVE = True,
-                BACKGROUND_COLOR = '000000',
-            )
-            category = self.addOpportunityCategory(category)
-            print 'PASS: addOpportunityCategory()'
-            self.deleteOpportunityCategory(category['CATEGORY_ID'])
-            print 'PASS: deleteOpportunityCategory()'
-        except:
-            print 'FAIL: addOpportunityCategory()'
-            print 'FAIL: deleteOpportunityCategory()'
+        USAGE:
         
-        # Test getOpportunityEmails()
-        if opportunity is not None:
-            try:
-                emails = self.getOpportunityEmails(opportunity['OPPORTUNITY_ID'])
-                print 'PASS: getOpportunityEmails(), found ' + str(len(emails)) + ' emails for random opportunity.'
-            except:
-                print 'FAIL: getOpportunityEmails()'
-                
-            # Test getOpportunityNotes()
-            
-            try:
-                notes = self.getOpportunityNotes(opportunity['OPPORTUNITY_ID'])
-                print 'PASS: getOpportunityNotes(), found ' + str(len(notes)) + ' notes for random opportunity.'
-            except:
-                print 'FAIL: getOpportunityNotes()'
+        i = Insightly()
+        link = {'LEAD_ID':lead_id,'TASK_ID':task_id}
+        i.create_child('tasks', task_id, 'tasklinks', link)
+        """
+        start_time = datetime.datetime.now()
+        test = self.test
+        object_type = lowercase(object_type)
+        if type(object_graph) is dict:
+            data = json.dumps(object_graph)
+            url = '/' + object_type + '/' + str(id) + '/' + sub_type
+            if test:
+                self.tests_run += 1
+                try:
+                    try:
+                        text = self.generateRequest(url, 'POST', data).decode()
+                    except:
+                        text = self.generateRequest(url, 'POST', data)
+                    end_time = datetime.datetime.now()
+                    td = end_time - start_time
+                    elapsed_time = td.total_seconds()
+                    self.log(True, url, 'POST', str(elapsed_time))
+                    self.tests_passed += 1
+                    self.printline('PASS: POST ' + url)
+                    data = json.loads(text)
+                    return data
+                except:
+                    end_time = datetime.datetime.now()
+                    td = end_time - start_time
+                    elapsed_time = td.total_seconds()
+                    self.log(False, url, 'POST', str(elapsed_time))
+                    self.printline('FAIL: POST ' + url)
+                    self.printline('    TRACE: ' + traceback.format_exc())
+            else:
+                text = self.generateRequest(url, 'POST', data)
+                data = json.loads(text)
+                return data
+        else:
+            raise Exception('object graph must be a Python dictionary')
         
-            # Test getOpportunityTasks()
-            try:
-                tasks = self.getOpportunityTasks(opportunity['OPPORTUNITY_ID'])
-                print 'PASS: getOpportunityTasks(), found ' + str(len(tasks)) + ' tasks for random opportunity.'
-            except:
-                print 'FAIL: getOpportunityTasks()'
+    def cruds(self, object_type, object_id, object_graph, repetitions=10, file_handle=None):
+        """
+        This is a test method which goes through the create, update, read, delete cycle for
+        an object. It repeats the process N times, and logs the average response time for
+        each endpoint. 
+        """
+        r = 0
+        timer = dict()
         
-            # Test getOpportunityStateHistory(), /v2.1/OpportunityStates
-            try:
-                states = self.getOpportunityStateHistory(opportunity['OPPORTUNITY_ID'])
-                print 'PASS: getOpportunityStateHistory(), found ' + str(len(states)) + ' states in history.'
-            except:
-                print 'FAIL: getOpportunityStateHistory()'
-            
-        # Test getOpportunityStateReasons(), /v2.1/OpportunityStateReasons
-        try:
-            reasons = self.getOpportunityStateReasons()
-            print 'PASS: getOpportunityStateReasons(), found ' + str(len(reasons)) + ' reasons.'
-        except:
-            print 'FAIL: getOpportunityStateReasons()'
-            
-        # Test getOrganizations(), /v2.1/Organizations
+        print('TESTING ' + object_type + ' v' + self.version)
         
-        try:
-            organizations = self.getOrganizations(top=top, orderby='DATE_UPDATED_UTC desc')
-            organization = organizations[0]
-            print 'PASS: getOrganizations(), found ' + str(len(organizations))
-            
-            # Test getOrganizationEmails()
+        while r < repetitions:
+            # test read method
+            st = datetime.datetime.now()
+            self.tests_run += 1
             try:
-                emails = self.getOrganizationEmails(organization['ORGANISATION_ID'])
-                print 'PASS: getOrganizationEmails(), found ' + str(len(emails)) + ' emails for most recent organization.'
+                self.tests_passed += 1
+                objects = self.read(object_type)
             except:
-                print 'FAIL: getOrganizationEmails()'
-            # Test getOrganizationNotes()
-            try:
-                notes = self.getOrganizationNotes(organization['ORGANISATION_ID'])
-                print 'PASS: getOrganizationNotes(), found ' + str(len(notes)) + ' notes for most recent organization.'
-            except:
-                print 'FAIL: getOrganizationNotes()'
-            # Test getOrganizationTasks()
-            try:
-                tasks = self.getOrganizationTasks(organization['ORGANISATION_ID'])
-                print 'PASS: getOrganizationTasks(), found ' + str(len(tasks)) + ' tasks for most recent organization.'
-            except:
-                print 'FAIL: getOrganizationTasks()'
-        except:
-            print 'FAIL: getOrganizations()'
+                pass
+            et = datetime.datetime.now()
+            td = et - st
+            timer['read'] = timer.get('read',0.0) + td.total_seconds()
             
-        # Test addOrganization()
-        try:
-            organization = dict(
-                ORGANISATION_NAME = 'Foo Corp',
-                BACKGROUND = 'Details',
-            )
-            organization = self.addOrganization(organization)
-            print 'PASS: addOrganization()'
+            st = datetime.datetime.now()
+            self.tests_run += 1
             try:
-                self.deleteOrganization(organization['ORGANISATION_ID'])
-                print 'PASS: deleteOrganization()'
+                object_graph = self.create(object_type, object_graph)
+                self.tests_passed += 1
             except:
-                print 'FAIL: deleteOrganization()'
-        except:
-            print 'FAIL: addOrganization()'\
+                pass
+            et = datetime.datetime.now()
+            td = et - st
+            timer['create'] = timer.get('create', 0.0) + td.total_seconds()
+
+            st = datetime.datetime.now()
+            self.tests_run += 1
+            try:
+                object_graph = self.update(object_type, object_graph)
+                self.tests_passed += 1
+            except:
+                pass
+            et = datetime.datetime.now()
+            td = et - st
+            timer['update'] = timer.get('update', 0.0) + td.total_seconds()
+
+            st = datetime.datetime.now()
+            self.tests_run += 1
+            try:
+                self.delete(object_type, object_graph[object_id])
+                self.tests_passed += 1
+            except:
+                pass
+            et = datetime.datetime.now()
+            td = et - st
+            timer['delete'] = timer.get('delete', 0.0) + td.total_seconds()
             
-        # Test getPipelines(), /v2.1/Pipelines
-        try:
-            pipelines = self.getPipelines()
-            print 'PASS: getPipelines(), found ' + str(len(pipelines)) + ' pipelines'
-        except:
-            print 'FAIL: getPipelines()'
-            
-        try:
-            stages = self.getPipelineStages()
-            print 'PASS: getPipelineStages(), found ' + str(len(stages)) + ' pipeline stages'
-        except:
-            print 'FAIL: getPipelineStages()'
+            r += 1
         
-        # Test getProjects(), /v2.1/Projects
-        try:
-            projects = self.getProjects(top=top, orderby='DATE_UPDATED_UTC desc')
-            project = projects[0]
-            project_id = project['PROJECT_ID']
-            print 'PASS: getProjects(), found ' + str(len(projects)) + ' projects.'
-            # Test getProjectEmails()
-            try:
-                emails = self.getProjectEmails(project_id)
-                print 'PASS: getProjectEmails(), found ' + str(len(emails)) + ' emails for most recent project.'
-            except:
-                print 'FAIL: getProjectEmails()'
-            # Test getProjectNotes()
-            try:
-                notes = self.getProjectNotes(project_id)
-                print 'PASS: getProjectNotes(), found ' + str(len(notes)) + ' notes for most recent project.'
-            except:
-                print 'FAIL: getProjectNotes()'
-            # Test getProjectTasks()
-            try:
-                tasks = self.getProjectTasks(project_id)
-                print 'PASS: getProjectTasks(), found ' + str(len(tasks)) + ' tasks for most recent project.'
-            except:
-                print 'FAIL: getProjectTasks()'
-        except:
-            print 'FAIL: getProjects()'
-            
-        # Test getProjectCategories(), /v2.1/ProjectCategories
-        try:
-            categories = self.getProjectCategories()
-            print 'PASS: getProjectCategories(), found ' + str(len(categories)) + ' categories.'
-        except:
-            print 'FAIL: getProjectCategories()'
-            
-        # Test addProjectCategory()
-        try:
-            category = dict(
-                CATEGORY_NAME = 'Test Category',
-                ACTIVE = True,
-                BACKGROUND_COLOR = '000000',
-            )
-            category = self.addProjectCategory(category)
-            print 'PASS: addProjectCategory()'
-            self.deleteProjectCategory(category['CATEGORY_ID'])
-            print 'PASS: deleteProjectCategory()'
-        except:
-            print 'FAIL: addProjectCategory()'
-            print 'FAIL: deleteProjectCategory()'
-            
-        # Test getRelationships(), /v2.1/Relationships
-            
-        try:
-            relationships = self.getRelationships()
-            print 'PASS: getRelationships(), found ' + str(len(relationships)) + ' relationships.'
-        except:
-            print 'FAIL: getRelationships()'
+        tkeys = timer.keys()
+        for k in tkeys:
+            timer[k] = timer[k] / float(repetitions)
+            if file_handle is not None:
+                line = '"' + str(self.version) + '","' + object_type + '","' + k + '","' + str(timer[k]) + '"\n'
+                file_handle.write(line)
         
-        # Test getTasks(), /v2.1/Tasks
-        try:
-            tasks = self.getTasks(top=top, orderby='DUE_DATE desc')
-            print 'PASS: getTasks(), found ' + str(len(tasks)) + ' tasks.'
-        except:
-            print 'FAIL: getTasks()'
-            
-        # Test getTeams
-        try:
-            teams = self.getTeams()
-            team = teams[0]
-            print 'PASS: getTeams(), found ' + str(len(teams)) + ' teams.'
-            # Test getTeamMembers
+    def delete(self, object_type, id, sub_type=None, sub_type_id = None):
+        """
+        This is a general purpose delete method that will allow the user to delete Insightly
+        objects (e.g. contacts) and sub_objects (e.g. delete a contact_info linked to an object)
+        
+        USAGE:
+        
+        i = Insightly()
+        lead_id = 123456
+        success = i.delete('leads', lead_id)
+        if success:
+            print 'Deleted lead number ' + str(lead_id)
+        """
+        start_time = datetime.datetime.now()
+        test = self.test
+        object_type = lowercase(object_type)
+        url = '/' + object_type
+        if id is not None:
+            url += '/' + str(id)
+            if sub_type is not None:
+                url += '/' + sub_type
+                if sub_type_id is not None:
+                    url += '/' + str(sub_type_id)
+        if test:
+            self.tests_run += 1
             try:
-                team_members = self.getTeamMembers(team['TEAM_ID'])
-                print 'PASS: getTeamMembers(), found ' + str(len(team_members)) + ' team members.'
+                self.generateRequest(url, 'DELETE', '', alt_auth = 'borkborkborkborkbork')
+                self.printline('FAIL: DELETE w/ bad auth ' + url)
             except:
-                print 'FAIL: getTeamMembers()'
-        except:
-            print 'FAIL: getTeams()'
+                self.tests_passed += 1
+                self.printline('PASS: DELETE w/ bad auth ' + url)
+        if test:
+            self.tests_run += 1
+            try:
+                text = self.generateRequest(url, 'DELETE', '')
+                end_time = datetime.datetime.now()
+                td = end_time - start_time
+                elapsed_time = td.total_seconds()
+                self.log(True, url, 'DELETE', str(elapsed_time))
+                self.printline('PASS: DELETE ' + url)
+                self.tests_passed += 1
+            except:
+                end_time = datetime.datetime.now()
+                td = end_time - start_time
+                elapsed_time = td.total_seconds()
+                self.log(False, url, 'DELETE', str(elapsed_time))
+                self.printline('FAIL: DELETE ' + url)
+                self.printline('    TRACE: ' + traceback.format_exc())
+        else:
+            text = self.generateRequest(url, 'DELETE', '')
+            return True
         
     def dictToList(self, data):
         """
@@ -539,31 +498,31 @@ class Insightly():
             l.append(data)
             return l
         elif data is None:
-            return list()
+            return
         else:
             return list()
-	
+        
     def findUser(self, email):
-	"""
-	Client side function to quickly look up Insightly users by email. Returns a dictionary containing
-	user details or None if not found. This is useful when you need to find the user ID for someone but
-	only know their email addresses, for example when creating and assigning a new project or task. 
-	"""
-	for u in self.users:
-	    if u.get('EMAIL_ADDRESS','') == email:
-		return u
-	    
-    def generateRequest(self, url, method, data):
+        """
+        Client side function to quickly look up Insightly users by email. Returns a dictionary containing
+        user details or None if not found. This is useful when you need to find the user ID for someone but
+        only know their email addresses, for example when creating and assigning a new project or task. 
+        """
+        for u in self.users:
+            if u.get('EMAIL_ADDRESS','') == email:
+                return u
+
+    def generateRequest(self, url, method, data, alt_auth=None, test=False, headers=None, response='body'):
         """
         This method is used by other helper functions to generate HTTPS requests and parse
         server responses. This will minimize the amount of work developers need to do to
         integrate with the Insightly API, and will also eliminate common sources of errors
-        such as authentication issues and malformed requests
+        such as authentication issues and malformed requests. Uses the urllib2 standard
+        library, so it is not dependent on third party libraries like Requests
         """
         if type(url) is not str: raise Exception('url must be a string')
         if type(method) is not str: raise Exception('method must be a string')
         valid_method = False
-        response = None
         text = ''
         if method == 'GET' or method == 'PUT' or method == 'DELETE' or method == 'POST':
             valid_method = True
@@ -571,1045 +530,621 @@ class Insightly():
             raise Exception('parameter method must be GET|DELETE|PUT|UPDATE')
         # generate full URL from base url and relative url
         full_url = self.baseurl + url
-        
+        # self.printline('URL:  ' + full_url)
         request = urllib2.Request(full_url)
-        base64string = base64.encodestring('%s:%s' % (self.apikey, '')).replace('\n', '')
-        request.add_header("Authorization", "Basic %s" % base64string)   
+        if self.gzip:
+            request.add_header("Accept-Encoding", "gzip")
+        if alt_auth is not None:
+            request.add_header("Authorization", self.alt_header)
+        else:
+            if self.version == 'mobile':
+                base64string = str(base64.b64encode(self.apikey + ':FromInsightlyMobileApp'))
+            else:
+                try:
+                    base64string = str(base64.b64encode(self.apikey.encode('ascii')), encoding='ascii')
+                except:
+                    base64string = str(base64.b64encode(self.apikey))
+                base64string.replace('\n','')
+            header = 'Basic ' + base64string
+            request.add_header("Authorization", header)
         request.get_method = lambda: method
+        request.add_header('Content-Type', 'application/json')
+        if headers is not None:
+            headerkeys = headers.keys()
+            for h in headerkeys:
+                request.add_header(h, headers[h])
+        # open the URL, if an error code is returned it should raise an exception
         if method == 'PUT' or method == 'POST':
-            request.add_header('Content-Type', 'application/json')
             result = urllib2.urlopen(request, data)
         else:
             result = urllib2.urlopen(request)
         text = result.read()
-        return text
+        if self.gzip:
+            try:
+                # try to decode as gzipped text
+                text = zlib.decompress(text, zlib.MAX_WBITS|16)
+            except:
+                # fall back to plain text (sometimes the server ignores the gzip encoding request, e.g. staging environment)
+                pass
+        if response == 'headers':
+            return result.info().headers
+        else:
+            return text
+        
+    def get(self, object_type, id, sub_type=None, test=False):
+        """
+        Returns a single Insightly object, for example to call /contacts/{id} to get a single
+        contact. Returns a Python dictionary
+        """
+        start_time = datetime.datetime.now()
+        url = '/' + object_type + '/' + str(id)
+        if sub_type is not None:
+            url += '/' + sub_type
+        if test:
+            self.tests_run += 1
+            try:
+                self.generateRequest(url, 'GET', '', alt_auth = 'borkborkborkborkbork')
+                self.printline('FAIL: GET w/ bad auth ' + url)
+            except:
+                self.tests_passed += 1
+                self.printline('PASS: GET w/ bad auth ' + url)
+        if test:
+            self.tests_run += 1
+            try:
+                text = self.generateRequest(url,'GET','')
+                end_time = datetime.datetime.now()
+                td = end_time - start_time
+                elapsed_time = td.total_seconds()
+                self.tests_passed += 1
+                self.printline('PASS: GET ' + url)
+                self.log(True, url, 'GET', str(elapsed_time))
+                try:
+                    results = json.loads(text)
+                except:
+                    results = json.loads(text.decode('utf-8'))
+                return results
+            except:
+                end_time = datetime.datetime.now()
+                td = end_time - start_time
+                elapsed_time = td.total_seconds()
+                self.log(False, url, 'GET', str(elapsed_time))
+                self.printline('FAIL: GET ' + url)
+                self.printline('    TRACE: ' + traceback.format_exc())
+        else:
+            text = self.generateRequest(url, 'GET', '')
+            try:
+                results = json.loads(text)
+            except:
+                results = json.loads(text.decode('utf-8'))
+            return results
+        
+    def get_all(self, object_type, updated_after_utc=None, ids_only=True):
+        """
+        Iterates through the entire recordset for an object type, optionally filtered by updated_after_utc,
+        returns a list of object IDs if ids_only is True
+        """
+        if self.version == 'mobile' or self.version == '2.1':
+            done = False
+            skip = 0
+            top = 100
+            results = list()
+            updated_after_utc = string.replace(updated_after_utc,' ','+')
+            while not done:
+                if updated_after_utc is not None:
+                    records = self.search(object_type, 'updated_after_utc=' + updated_after_utc, top=top, skip=skip)
+                else:
+                    records = self.search(object_type, '', top=top, skip=skip)
+                print('Search top ' + str(top) + ' after ' + str(skip) + ' since ' + updated_after_utc + ' found ' + str(len(records)))
+                skip += top
+                for r in records:
+                    if ids_only:
+                        if object_type == 'contacts':
+                            object_id = r['CONTACT_ID']
+                        elif object_type == 'emails':
+                            object_id = r['EMAIL_ID']
+                        elif object_type == 'events':
+                            object_id = r['EVENT_ID']
+                        elif object_type == 'leads':
+                            object_id = r['LEAD_ID']
+                        elif object_type == 'notes':
+                            object_id = r['NOTE_ID']
+                        elif object_type == 'opportunities':
+                            object_id = r['OPPORTUNITY_ID']
+                        elif object_type == 'organisations':
+                            object_id = r['ORGANISATION_ID']
+                        elif object_type == 'projects':
+                            object_id = r['PROJECT_ID']
+                        elif object_type == 'tasks':
+                            object_id = r['TASK_ID']
+                        elif object_type == 'users':
+                            object_id = r['USER_ID']
+                        else:
+                            object_id = None
+                        if object_id is not None:
+                            if object_id not in results:
+                                results.append(object_id)
+                    else:
+                        results.append(r)
+                if len(records) < 1:
+                    done = True
+            return results
+        else:
+            raise Exception('get_all() is only supported for version 2.2 and mobile APIs')
     
+    def getMethods(self, test=False):
+        """
+        Returns a list of the callable methods in this library.
+        """
+        methods = [method for method in dir(self) if callable(getattr(self, method))]
+        return methods
+    
+    def log(self, success, url, method, duration):
+        if self.log_file is not None:
+            f = self.log_file
+            if success:
+                success = 'PASS'
+            else:
+                success = 'FAIL'
+            f.write('"' + success + '","' + url + '","' + method + '","' + duration + '"\n')
+        
     def ODataQuery(self, querystring, top=None, skip=None, orderby=None, filters=None):
         """
         This helper function generates an OData compatible query string. It is used by many
         of the search functions to enable users to filter, page and order recordsets.
+        
+        NOTE: version 2.2 does not support OData, but does support optional querystring
+        parameters. This function will generate the correct query string depending on the
+        API version to preserve backward compatibility. Version 2.2 also limits you to
+        filtering on a single optional parameters (e.g. phone_number=4155551212) to insure good
+        query performance. The orderby option is no longer supported in version 2.2.
+        You can do a wildcard search by prepending or appending a % sign to a filter,
+        for example, phone = %4155551212 will match for 14155551212 and +14155551212.
+        
+        See the version 2.2 API documentation for a list of optional parameters that are
+        currently supported by each API endpoint.
         """
-        if type(querystring) is str:
-            if top is not None:
-                if querystring == '':
-                    querystring += '?$top=' + str(top)
+        #
+        # TODO: double check that this has been implemented correctly
+        #
+        if str(self.version) == '2.2' or self.version == 'mobile':
+            if type(querystring) is str:
+                if top is not None:
+                    querystring += '?top=' + str(top)
                 else:
-                    querystring += '&$top=' + str(top)
-            if skip is not None:
-                if querystring == '':
-                    querystring += '?$skip=' + str(skip)
-                else:
-                    querystring += '&$skip=' + str(skip)
-            if orderby is not None:
-                if querystring == '':
-                    querystring += '?$orderby=' + urllib.quote(orderby)
-                else:
-                    querystring += '&$orderby=' + urllib.quote(orderby)
-            if type(filters) is list:
-                for f in filters:
-                    f = string.replace(f,' ','%20')
-                    f = string.replace(f,'=','%20eq%20')
-                    f = string.replace(f,'>','%20gt%20')
-                    f = string.replace(f,'<','%20lt%20')
+                    querystring += '?top=100'
+                if skip is not None:
+                    querystring += '&skip=' + str(skip)
+                if filters is not None:
+                    if type(filters) is dict:
+                        filterkeys = filters.keys()
+                        if len(filterkeys) > 1:
+                            raise Exception('Only one filter parameter is allowed per query at this time')
+                        else:
+                            querystring += '&' + urlencode(filters)
+                return querystring
+            else:
+                return ''
+        else:
+            if type(querystring) is str:
+                if top is not None:
                     if querystring == '':
-                        querystring += '?$filter=' + f
+                        querystring += '?$top=' + str(top)
                     else:
-                        querystring += '&$filter=' + f
-            return querystring
-        else:
-            return ''
-    
-    def deleteComment(self, id):
-        """
-        Delete a comment, expects the comment's ID (unique record locator).
-        """
-        text = self.generateRequest('/v2.1/Comments/' + str(id), 'DELETE','')
-        return True
-
-    def getComments(self, id):
-        """
-        Gets comments for an object. Expects the parent object ID.
-        """
-        #
-        # HTTP GET api.insight.ly/v2.1/Comments
-        #
-        text = self.generateRequest('/v2.1/Comments/' + str(id), 'GET', '')
-        return json.loads(text)
-    
-    def updateComment(self, body, owner_user_id, comment_id=None):
-        """
-        Creates or updates a comment. If you are updating an existing comment, be sure to include the comment_id
-        """
-        if len(body) < 1:
-            raise Exception('Comment body cannot be empty')
-            return
-        if type(owner_user_id) is not int:
-            raise Exception('owner_user_id must be an integer, and must be a valid user id')
-        data = dict(
-            BODY = body,
-            OWNER_USER_ID = owner_user_id,
-        )
-        if comment_id is not None and type(comment_id) is int:
-            data['COMMENT_ID'] = comment_id
-        urldata = urllib.urlencode(data)
-        text = self.generateRequest('/v2.1/Comments', 'PUT', urldata)
-        return json.loads(text)
-    
-    def addContact(self,  contact):
-        """
-        Add/update a contact on Insightly. The parameter contact should be a dictionary containing valid data fields
-        for a contact, or the string 'sample' to request a sample object. When submitting a new contact, set the
-        CONTACT_ID field to 0 or omit it.
-        """
-        if type(contact) is str:
-            if contact == 'sample':
-                contacts = self.getContacts(top=1)
-                return contacts[0]
+                        querystring += '&$top=' + str(top)
+                if skip is not None:
+                    if querystring == '':
+                        querystring += '?$skip=' + str(skip)
+                    else:
+                        querystring += '&$skip=' + str(skip)
+                if orderby is not None:
+                    if querystring == '':
+                        querystring += '?$orderby=' + urllib.quote(orderby)
+                    else:
+                        querystring += '&$orderby=' + urllib.quote(orderby)
+                if type(filters) is list:
+                    for f in filters:
+                        f = string.replace(f,' ','%20')
+                        f = string.replace(f,'=','%20eq%20')
+                        f = string.replace(f,'>','%20gt%20')
+                        f = string.replace(f,'<','%20lt%20')
+                        if querystring == '':
+                            querystring += '?$filter=' + f
+                        else:
+                            querystring += '&$filter=' + f
+                return querystring
             else:
-                raise Exception('contact must be a dictionary with valid contact data fields, or the string \'sample\' to request a sample object')
+                return ''
+        
+    def printline(self, text):
+        if lowercase(text).count('fail') > 0:
+            self.test_failures.append(text)
+        if self.filehandle is None:
+            try:
+                self.filehandle = open('testresults.txt', 'w')
+            except:
+                self.filehandle = None
+        if self.filehandle is not None:
+            if self.debug:        print(text)
+            self.filehandle.write(text + '\n')
+        
+    def read(self, object_type, id = None, sub_type=None, top=None, skip=None, orderby=None, filters=None):
+        """
+        This is a general purpose read method that will allow the user to easily fetch Insightly objects.
+        This will replace the hand built request handlers, which are too numerous to test and support
+        adequately.
+        
+        USAGE:
+        
+        i = Insightly(version=2.2, apikey='foozlebarzle')
+        projects = i.read('projects', filters{'status':'in progress'})
+        for p in projects:
+            print str(p)
+            
+        NOTE:
+        
+        The orderby parameter is no longer supported in version 2.2. If you need to search for records newer than
+        a certain date/time, use the filter updated_after_utc
+        
+        If an optional query parameter is provided in filters (should be a dictionary), this function will query
+        /{object_type}/search
+        
+        """
+        test = self.test
+        if top is not None or skip is not None or orderby is not None or filters is not None:
+            search=True
         else:
-            if type(contact) is dict:
-                if contact.get('CONTACT_ID', 0) > 0:
-                    text = self.generateRequest('/v2.1/Contacts', 'PUT', json.dumps(contact))
+            search=False
+        object_type = lowercase(object_type)
+        url = '/' + object_type
+        if id is not None:
+            url += '/' + str(id)
+            if sub_type is not None:
+                url += '/' + sub_type
+        elif filters is not None:
+            url += '/search'
+        else:
+            pass
+        if search:
+            url += self.ODataQuery('',top=top, skip=skip, orderby=orderby, filters=filters)
+        if test:
+            self.tests_run += 1
+            try:
+                self.generateRequest(url, 'GET', '', alt_auth = 'borkborkborkborkbork')
+                self.printline('FAIL: GET w/ bad auth ' + url)
+            except:
+                self.tests_passed += 1
+                self.printline('PASS: GET w/ bad auth ' + url)
+        if test:
+            self.tests_run += 1
+            try:
+                start_time = datetime.datetime.now()
+                text = self.generateRequest(url,'GET','')
+                self.tests_passed += 1
+                self.printline('PASS: GET ' + url)
+                try:
+                    results = self.dictToList(json.loads(text))
+                except:
+                    results = self.dictToList(json.loads(text.decode('utf-8')))
+                end_time = datetime.datetime.now()
+                td = end_time - start_time
+                elapsed_time = td.total_seconds()
+                self.log(True, url, 'GET', str(elapsed_time))
+                return results
+            except:
+                end_time = datetime.datetime.now()
+                td = end_time - start_time
+                elapsed_time = td.total_seconds()
+                self.log(False, url, 'GET', str(elapsed_time))
+                self.printline('FAIL: GET ' + url)
+                self.printline('    TRACE: ' + traceback.format_exc())
+        else:
+            text = self.generateRequest(url, 'GET', '')
+            try:
+                results = self.dictToList(json.loads(text))
+            except:
+                results = self.dictToList(json.loads(text.decode('utf-8')))
+            return results
+        
+    def record_count(self, object_type, id=None, sub_type=None):
+        if object_type == 'comments':
+            record_id = 'COMMENT_ID'
+        elif object_type == 'contacts':
+            record_id = 'CONTACT_ID'
+        elif object_type == 'emails':
+            record_id = 'EMAIL_ID'
+        elif object_type == 'events':
+            record_id = 'EVENT_ID'
+        elif object_type == 'leads':
+            record_id = 'LEAD_ID'
+        elif object_type == 'notes':
+            record_id = 'NOTE_ID'
+        elif object_type == 'organisations':
+            record_id = 'ORGANISATION_ID'
+        elif object_type == 'opportunities':
+            record_id = 'OPPORTUNITY_ID'
+        elif object_type == 'projects':
+            record_id = 'PROJECT_ID'
+        elif object_type == 'tasks':
+            record_id = 'TASK_ID'
+        else:
+            record_id = 'ID'
+        num_records = 0
+        url = '/' + object_type + '?count_total=true'
+        headers = self.generateRequest(url, 'GET', None, response='headers')
+        for h in headers:
+            pv = string.split(h, ':')
+            if len(pv) > 1:
+                parm = pv[0]
+                value = pv[1]
+                if string.count(parm, 'Total-Count') > 0:
+                    num_records = int(string.strip(value))
+        if num_records > 0:
+            skip = 0
+            records_found = 0
+            last_id = 0
+            if self.version == 'mobile':
+                done = False
+                while not done:
+                    if skip > 0:
+                        url = '/' + object_type + '?top=500&id_after=' + str(last_id)
+                    else:
+                        url = '/' + object_type + '?top=500'
+                    response = self.generateRequest(url, 'GET', None)
+                    records = json.loads(response)
+                    records_found += len(records)
+                    if len(records) < 1:
+                        done = True
+                    else:
+                        skip += 500
+                        last_id = records[len(records) - 1][record_id]
+                self.printline('FOUND ' + str(records_found) + ' of ' + str(num_records) + ' expected ' + object_type)
+            else:
+                return
+        
+    def search(self, object_type, expression, top=100, skip=0, expect=0):
+        """
+        This implements an easier to use search function, where before we
+        used optional parameters for the read function. This is still supported
+        but users are encouraged to use this function instead.
+        
+        USAGE
+        
+        contacts = i.search('contacts', 'email=foo@bar.com', top=100, filters={'OWNER_USER_ID':'foo'})
+        
+        PARAMETERS
+        
+        expression : a parm=value pair for an allowed server side filter (e.g. phone=415551212)
+        top : return the first N entries
+        skip : skip N entries (for pagination)
+        """
+        if self.version != '2.2':
+            raise Exception('search() is only supported in v2.2 API')
+        start_time = datetime.datetime.now()
+        test = self.test
+        url = '/' + object_type + '/search?top=' + str(top)
+        if skip > 0:
+            url += '&skip=' + str(skip)
+        if string.count(expression,'=') > 0:
+            parms = string.split(expression,'=')
+            if len(parms) == 2:
+                parm = parms[0]
+                parm = parm.encode('ascii','xmlcharrefreplace')
+                value = encode_query(parms[1])
+                url += '&' + parm + '=' + value
+        if test:
+            self.tests_run += 1
+            try:
+                self.generateRequest(url, 'GET', '', alt_auth = 'borkborkborkborkbork')
+                self.printline('FAIL: GET/SEARCH w/ bad auth ' + url)
+            except:
+                self.tests_passed += 1
+                self.printline('PASS: GET/SEARCH w/ bad auth ' + url)
+        if test:
+            self.tests_run += 1
+            try:
+                text = self.generateRequest(url,'GET','')
+                end_time = datetime.datetime.now()
+                td = end_time - start_time
+                elapsed_time = td.total_seconds()
+                self.log(True, url, 'GET', str(elapsed_time))
+                self.printline('PASS: GET/SEARCH ' + url)
+                try:
+                    results = self.dictToList(json.loads(text))
+                except:
+                    results = self.dictToList(json.loads(text.decode('utf-8')))
+                if expect == 0:
+                    if len(results) < 1:
+                        raise Exception('No records found, assume search test failed.')
                 else:
-                    text = self.generateRequest('/v2.1/Contacts', 'POST', json.dumps(contact))
-                return json.loads(text)
-            else:
-                raise Exception('contact must be a dictionary with valid contact data fields, or the string \'sample\' to request a sample object')
+                    if len(results) != expect:
+                        raise Exception('Incorrect number of results found, assume search test failed.')
+                self.tests_passed += 1
+                return results
+            except:
+                end_time = datetime.datetime.now()
+                td = end_time - start_time
+                elapsed_time = td.total_seconds()
+                self.log(False, url, 'GET', str(elapsed_time))
+                self.printline('FAIL: GET/SEARCH ' + url)
+                self.printline(    'TRACE: ' + traceback.format_exc())
+                return []
+        else:
+            text = self.generateRequest(url, 'GET', '')
+            try:
+                results = self.dictToList(json.loads(text))
+            except:
+                results = self.dictToList(json.loads(text.decode('utf-8')))
+            return results
         
-    def deleteContact(self, id):
+    def update(self, object_type, object_graph, id = None, sub_type = None):
         """
-        Deletes a comment, identified by its record id
-        """
-        text = self.generateRequest('/v2.1/Contacts/' + str(id), 'DELETE', '')
-        return True
-    
-    def getContacts(self, ids=None, email=None, tag=None, filters=None, top=None, skip=None, orderby=None):
-        """
-        Get a list of matching contacts, expects the following optional parameters:
+        This is a general purpose write method that can be used to update (PUT)
+        Insightly objects.
         
-        ids = list of contact IDs
-        email = user's email address
-        tag = tag or keyword
-        
-        In addition, this method also supports OData operators:
-        
-        top = return only the first N records in the recordset
-        skip = skip the first N records in the recordset
-        orderby = e.g. 'LAST_NAME desc'
-        filters = a list of filter statements
-        
-        Example:
+        USAGE:
         
         i = Insightly()
-        contacts = i.getContacts(top=200,filters=['FIRST_NAME=\'Brian\''])
-        
-        It returns a list of dictionaries or raises an exception in the case of a malformed server response
+        lead_id = 123456
+        lead = i.read('leads', lead_id)
+        if lead is not None:
+            lead['first_name'] = 'Foozle'
+            lead['last_name'] = 'Barzle
+            success = i.update('leads', lead, id = lead_id)
+            if success:
+                print 'Updated lead number ' + str(lead_id)
         """
-        if ids is not None and type(ids) is not list:
-            raise Exception('parameter ids must be a list')
-        if email is not None and type(email) is not str:
-            raise Exception('parameter email must be a string')
-        if tag is not None and type(tag) is not str:
-            raise Exception('parameter tag must be a string')
-        if filters is not None and type(filters) is not list:
-            raise Exception('parameter filters must be a list')
-        querystring = self.ODataQuery('', top=top, skip=skip, orderby=orderby, filters=filters)
-        if email is not None:
-            querystring += '?email=' + email
-        if tag is not None:
-            if querystring == '':
-                querystring += '?tag=' + tag
+        start_time = datetime.datetime.now()
+        object_type = lowercase(object_type)
+        test = self.test
+        if type(object_graph) is dict:
+            data = json.dumps(object_graph)
+            url = '/' + object_type
+            if id is not None:
+                url += '/' + str(id)
+                if sub_type is not None:
+                    url += '/' + sub_type
+            if test:
+                self.tests_run += 1
+                try:
+                    self.generateRequest(url, 'PUT', data, alt_auth = 'borkborkborkborkbork')
+                    self.printline('FAIL: PUT w/ bad auth ' + url)
+                except:
+                    self.tests_passed += 1
+                    self.printline('PASS: PUT w/ bad auth ' + url)
+            if test:
+                try:
+                    self.tests_run += 1
+                    date_updated_utc = object_graph['DATE_UPDATED_UTC']
+                except:
+                    date_updated_utc = None
+                self.tests_run += 1
+                try:
+                    try:
+                        text = self.generateRequest(url, 'PUT', data).decode()    
+                    except:
+                        text = self.generateRequest(url, 'PUT', data)
+                    end_time = datetime.datetime.now()
+                    td = end_time - start_time
+                    elapsed_time = td.total_seconds()
+                    self.log(True, url, 'PUT', str(elapsed_time))
+                    data = json.loads(text)
+                    self.printline('PASS: PUT ' + url)
+                    self.tests_passed += 1
+                    if date_updated_utc is not None:
+                        try:
+                            if date_updated_utc != data['DATE_UPDATED_UTC']:
+                                self.tests_passed += 1
+                                self.printline('PASS: ' + object_type + ' DATE_UPDATED_UTC updated')
+                            else:
+                                self.printline('FAIL: ' + object_type + ' DATE_UPDATED_UTC not updated')
+                        except:
+                            pass
+                    return data
+                except:
+                    end_time = datetime.datetime.now()
+                    td = end_time - start_time
+                    elapsed_time = td.total_seconds()
+                    self.log(False, url, 'PUT', str(elapsed_time))
+                    self.printline('FAIL: PUT ' + url)
+                    self.printline(    'TRACE: ' + traceback.format_exc())
             else:
-                querystring += '&tag=' + tag
-        if ids is not None and len(ids) > 0:
-            if querystring == '':
-                querystring += '?ids='
-            else:
-                querystring += '&ids='
-            for i in ids:
-                querystring += i + ','
-        text = self.generateRequest('/v2.1/Contacts' + querystring, 'GET', '')
-        return self.dictToList(json.loads(text))
+                try:
+                    text = self.generateRequest(url, 'PUT', data).decode()    
+                except:
+                    text = self.generateRequest(url, 'PUT', data)
+                data = json.loads(text)
+                return data
+        else:
+            raise Exception('object_graph must be a Python dictionary')
+        
+    def upload(self, object_type, id, filename):
+        start_time = datetime.datetime.now()
+        test = self.test
+        f = open(filename, 'rb')
+        value = f.read()
+        content_type, body = self.encode_multipart_formdata([(filename + 'xyxyxyxyxyxyxyxyxyx314159', filename, value)])
+        headers=dict()
+        headers['Content-Type'] = content_type
+        headers['Content-Length'] = str(len(body))
+        url = '/' + object_type + '/'+ str(id) + '/fileattachments'
+        if test:
+            self.tests_run += 1
+            try:
+                try:
+                    text = self.generateRequest(url, 'POST', body, headers=headers).decode()
+                except:
+                    text = self.generateRequest(url, 'POST', body, headers=headers)
+                end_time = datetime.datetime.now()
+                td = end_time - start_time
+                elapsed_time = td.total_seconds()
+                self.log(True, url, 'POST', str(elapsed_time))
+                self.printline('PASS: UPLOAD ' + url)
+                self.tests_passed += 1
+                return json.loads(text)
+            except:
+                end_time = datetime.datetime.now()
+                td = end_time - start_time
+                elapsed_time = td.total_seconds()
+                self.log(False, url, 'POST', str(elapsed_time))
+                self.printline('FAIL: UPLOAD ' + url)
+                self.printline(    'TRACE: ' + traceback.format_exc())
+        else:
+            try:
+                text = self.generateRequest(url, 'POST', body, headers=headers).decode()
+            except:
+                text = self.generateRequest(url, 'POST', body, headers=headers)
+            return json.loads(text)
     
-    def getContact(self, id):
-        """
-        Gets a specific contact, identified by its record id
-        """
-        # Do lazy exception handling, returns True if all goes well, otherwise raises whatever exception caused the issue
-        text = self.generateRequest('/v2.1/Contacts/' + str(id), 'GET','')
-        json.loads(text)
+    def upload_image(self, object_type, id, filename):
+        start_time = datetime.datetime.now()
+        test = self.test
+        f = open(filename, 'rb')
+        value = f.read()
+        # TODO: probably need to clean the filename so it does not have illegal characters
+        url = '/' + object_type + '/' + str(id) + '/image/' + filename
+        if test:
+            self.tests_run += 1
+            try:
+                self.generateRequest(url, 'PUT', value)
+                end_time = datetime.datetime.now()
+                td = end_time - start_time
+                elapsed_time = td.total_seconds()
+                self.log(True, url, 'PUT', str(elapsed_time))
+                self.printline('PASS: UPLOAD IMAGE: ' + url)
+                self.tests_passed += 1
+            except:
+                end_time = datetime.datetime.now()
+                td = end_time - start_time
+                elapsed_time = td.total_seconds()
+                self.log(False, url, 'PUT', str(elapsed_time))
+                self.printline('FAIL: UPLOAD IMAGE: ' + url)
+                self.printline(    'TRACE: ' + traceback.format_exc())
+        else:
+            return self.generateRequest(url, 'PUT', value)
         
-    def getContactEmails(self, id):
-        """
-        Gets emails for a contact, identified by its record locator, returns a list of dictionaries
-        """
+    def encode_multipart_formdata(self, files):
         #
-        # Get a contact's emails
+        # NOTE: file attachment uploads do not currently work for Python 3.x, working on this issue
         #
-        # HTTP GET api.insight.ly/v2.1/Contacts/{id}/Emails
-        #
-        text = self.generateRequest('/v2.1/Contacts/' + str(id) + '/Emails', 'GET', '')
-        return self.dictToList(json.loads(text))
-    
-    def getContactNotes(self, id):
-        """
-        Gets a list of the notes attached to a contact, identified by its record locator. Returns a list of dictionaries.
-        """
-        text = self.generateRequest('/v2.1/Contacts/' + str(id) + '/Notes', 'GET', '')
-        return self.dictToList(json.loads(text))
-        
-    def getContactTasks(self, id):
-        """
-        Gets a list of the tasks attached to a contact, identified by its record locator. Returns a list of dictionaries.
-        """
-        text = self.generateRequest('/v2.1/Contacts/' + str(id) + '/Tasks', 'GET', '')
-        return self.dictToList(json.loads(text))
-    
-    def getCountries(self):
-        """
-        Gets a list of countries recognized by Insightly. Returns a list of dictionaries.
-        """
-        text = self.generateRequest('/v2.1/Countries', 'GET', '')
-        countries = json.loads(text)
-        return countries
-    
-    def getCurrencies(self):
-        """
-        Gets a list of currencies recognized by Insightly. Returns a list of dictionaries.
-        """
-        text = self.generateRequest('/v2.1/Currencies', 'GET', '')
-        currencies = json.loads(text)
-        return currencies
-    
-    def getCustomFields(self):
-        """
-        Gets a list of custom fields, returns a list of dictionaries
-        """
-        text = self.generateRequest('/v2.1/CustomFields', 'GET', '')
-        return self.dictToList(json.loads(text))
-    
-    def getCustomField(self, id):
-        """
-        Gets details for a custom field, identified by its record id. Returns a dictionary
-        """
-        text = self.generateRequest('/v2.1/CustomFields/' + str(id), 'GET', '')
-        return json.loads(text)
-    
-    def getEmails(self, top=None, skip=None, orderby=None, filters=None):
-        """
-        Returns a list of emails for a resource id.
-        
-        This search method supports the OData operators: top, skip, orderby and filters
-        """
-        querystring = self.ODataQuery('', top=top, skip=skip, orderby=orderby, filters=None)
-        text = self.generateRequest('/v2.1/Emails' + querystring, 'GET','')
-        return self.dictToList(json.loads(text))
-        
-    def getEmail(self, id):
-        """
-        Returns an invidivual email, identified by its record locator id
-        
-        Returns a dictionary as a response or raises an exception
-        """
-        text = self.generateRequest('/v2.1/Emails/' + str(id), 'GET', '')
-        return json.loads(text)
-        
-    def deleteEmail(self,id):
-        """
-        Deletes an individual email, identified by its record locator id
-        
-        Returns True or raises an exception
-        """
-        text = self.generateRequest('/v2.1/Emails/' + str(id), 'DELETE', '')
-        return True
-    
-    def getEmailComments(self, id):
-        """
-        Returns the comments attached to an email, identified by its record locator id
-        """
-        text = self.generateRequest('/v2.1/Emails/' + str(id) + '/Comments')
-        return self.dictToList(json.loads(text))
-        
-    def addCommentToEmail(self, id, body, owner_user_id):
-        """
-        Adds a comment to an existing email, identified by its record locator id.
-        
-        The comment parameter is a dictionary containing the following fields:
-        
-        TODO: getting 400 responses, needed to debug
-        """
-        data = dict(
-            BODY = body,
-            OWNER_USER_ID = owner_user_id,
-        )
-        urldata = json.dumps(data)
-        text = self.generateRequest('/v2.1/Emails/' + str(id) + '/Comments', 'POST', urldata)
-        return json.loads(text)
-    
-    def addEvent(self, event):
-        """
-        Add/update an event in the calendar.
-        
-        NOTE: owner_user_id is required, and must point to a valid Insightly user id, if not you will get
-        a 400 (bad request) error.
-        """
-        if type(event) is str:
-            if event == 'sample':
-                events = self.getEvents(top=1)
-                return events[0]
-        elif type(event) is dict:
-            if event.get('EVENT_ID',0) > 0:
-                text = self.generateRequest('/v2.1/Events', 'PUT', json.dumps(event))
-            else:
-                text = self.generateRequest('/v2.1/Events', 'POST', json.dumps(event))
-            return json.loads(text)
-        else:
-            raise Exception('The parameter event should be a dictionary with valid fields for an event object, or the string \'sample\' to request a sample object.')
-    
-    def deleteEvent(self, id):
-        """
-        Deletes an event, identified by its record id
-        """
-        text = self.generateRequest('/v2.1/Events/' + str(id), 'DELETE', '')
-        return True
-        
-    def getEvents(self, top=None, skip=None, orderby=None, filters=None):
-        """
-        Gets a calendar of upcoming events.
-        
-        This method supports OData filters:
-        
-        top = return first N records
-        skip = skip the first N records
-        orderby = order results, e.g.: orderby='START_DATE_UTC desc'
-        filters = list of filters, e.g.: ['FIRST_NAME=\'Brian\'','LAST_NAME=\'McConnell\'']
-        
-        List is returned as a list of dictionaries.
-        """
-        querystring = self.ODataQuery('', top = top, skip=skip, orderby = orderby, filters = filters)
-        text = self.generateRequest('/v2.1/Events' + querystring, 'GET', '')
-        return self.dictToList(json.loads(text))
-        
-    def getEvent(self, id):
-        """
-        gets an individual event, identified by its record id
-        
-        Returns a dictionary
-        """
-        text = self.generateRequest('/v2.1/Events/' + str(id))
-        json.loads(text)
-    
-    def addFileCategory(self, category, dummy=False):
-        """
-        Add/update a file category to your account. Expects a dictionary containing the category details.
-        
-        You can also call addFileCategory('sample') to request a sample object. 
-        """
-        if type(category) is str:
-            if category == 'sample':
-                categories = self.getFileCategories()
-                return categories[0]
-        if type(category) is not dict:
-            raise Exception('category must be a dict')
-        urldata = json.dumps(category)
-        if category.get('CATEGORY_ID',None) is not None:
-            text = self.generateRequest('/v2.1/FileCategories', 'PUT', urldata)
-        else:
-            text = self.generateRequest('/v2.1/FileCategories', 'POST', urldata)
-        return json.loads(text)
-    
-    def deleteFileCategory(self, id):
-        """
-        Delete a file category, identified by its record id
-        
-        Returns True if successful or raises an exception
-        """
-        text = self.generateRequest('/v2.1/FileCategories/' + str(id), 'DELETE', '')
-        return True
-    
-    def getFileCategories(self):
-        """
-        Gets a list of file categories
-        
-        Returns a list of dictionaries
-        """
-        text = self.generateRequest('/v2.1/FileCategories', 'GET', '')
-        return self.dictToList(json.loads(text))
-        
-    def getFileCategory(self, id):
-        """
-        Gets a file category, identified by its record id
-        
-        Returns a dictionary
-        """
-        text = self.generateRequest('/v2.1/FileCategories/' + str(id), 'GET', '')
-        json.loads(text)
-    
-    def addNote(self, note):
-        """
-        Add/update a note, where the parameter note is a dictionary withthe required fields. To obtain a sample object, just call
-        
-        addNote('sample')
-        
-        The method returns a dictionary containing the object as it is stored on the server, or raises an exception if the update
-        failed. If you receive a 400 (bad request) error it is probably because you are missing a required field, or are linking to
-        another record improperly. 
-        """
-        if type(note) is str:
-            if note == 'sample':
-                note = self.getNotes(top=1)
-                return note[0]
-            else:
-                raise Exception('note must be a dictionary with valid fields, or the string \'sample\' to request a sample object')
-        else:
-            if type(note) is dict:
-                if note.get('NOTE_ID',0) > 0:
-                    text = self.generateRequest('/v2.1/Notes', 'PUT', json.dumps(note))
-                else:
-                    text = self.generateRequest('/v2.1/Notes', 'POST', json.dumps(note))
-                return json.loads(text)
-    
-    def deleteNote(self, id):
-        """
-        Delete a note, identified by its record locator.
-        """
-        text = self.generateRequest('/v2.1/Notes/' + str(id), 'DELETE', '')
-        return True
-    
-    def getNotes(self, top=None, skip=None, orderby=None, filters=None):
-        """
-        Gets a list of notes created by the user, returns a list of dictionaries
-        
-        This method supports the ODATA operators:
-        
-        top = return first N records
-        skip = skip first N records
-        orderby = order by statement (e.g. 'DATE_CREATED_UTC desc')
-        filters = list of filter statements
-        """
-        querystring = self.ODataQuery('', top=top, skip=skip, orderby=orderby, filters=filters)
-        text = self.generateRequest('/v2.1/Notes' + querystring, 'GET', '')
-        return self.dictToList(json.loads(text))
-        
-    def getNote(self, id):
-        """
-        Gets a note, identified by its record id. Returns a dictionary or raises an error.
-        """
-        text = self.generateRequest('/v2.1/Notes/' + str(id), 'GET', '')
-        try:
-            return json.loads(text)
-        except:
-            raise Exception(error_invalid_server_json)
-            return
-    
-    def getNoteComments(self, id):
-        """
-        Gets the comments attached to a note, identified by its record id. Returns a list of dictionaries.
-        """
-        text = self.generateRequest('/v2.1/Notes/' + str(id) + '/Comments', 'GET', '')
-        return self.dictToList(json.loads(text))
-        
-    def addNoteComment(self, id, comment):
-        """
-        Method not implemented yet
-        """
-        if type(comment) is str:
-            if comment == 'sample':
-                comment = dict(
-                    COMMENT_ID = 0,
-                    BODY = 'This is a comment.',
-                    OWNER_USER_ID = 1,
-                    DATE_CREATED_UTC = '2014-07-15 16:40:00',
-                    DATE_UPDATED_UTC = '2014-07-15 16:40:00',
-                )
-                return comment
-            else:
-                raise Exception('The parameter comment should be a dictionary with the required fields, or the string \'sample\' to request a sample object.')
-        elif type(comment) is dict:
-            text = self.generateRequest('/v2.1/' + str(id) +'/Comments', 'POST', json.dumps(comment))
-            return json.loads(text)
-        else:
-            raise Exception('The parameter comment should be a dictionary with the required fields, or the string \'sample\' to request a sample object.')
-    
-    def addOpportunity(self, opportunity):
-        """
-        Add/update an opportunity in Insightly. This method expects a dictionary containing valid fields for an opportunity, or the string 'sample' to request a sample object. 
-        """
-        if type(opportunity) is str:
-            if opportunity == 'sample':
-                opportunities = self.getOpportunities(top=1)
-                return opportunities[0]
-            else:
-                raise Exception('The parameter opportunity must be a dictionary with valid fields for an opportunity, or the string \'sample\' to request a sample object.')
-        elif type(opportunity) is dict:
-            if opportunity.get('OPPORTUNITY_ID',0) > 0:
-                text = self.generateRequest('/v2.1/Opportunities', 'PUT', json.dumps(opportunity))
-            else:
-                text = self.generateRequest('/v2.1/Opportunities', 'POST', json.dumps(opportunity))
-            return json.loads(text)
-        else:
-            raise Exception('The parameter opportunity must be a dictionary with valid fields for an opportunity, or the string \'sample\' to request a sample object.')
-    
-    def deleteOpportunity(self, id):
-        """
-        Deletes an opportunity, identified by its record id. Returns True if successful, or raises an exception
-        """
-        text = self.generateRequest('/v2.1/Opportunities/' + str(id), 'DELETE', '')
-        return True
-    
-    def getOpportunities(self, ids=None, tag=None, top=None, skip=None, orderby=None, filters=None):
-        """
-        Gets a list of opportunities
-        
-        This method recognizes the OData operators:
-        top = return the first N records
-        skip = skip the first N records
-        orderby = orderby clause, e.g.: orderby='DATE_UPDATED_UTC desc'
-        filters = list of OData filter statements
-        """
-        querystring = self.ODataQuery('', top=top, skip=skip, orderby=orderby, filters=filters)
-        text = self.generateRequest('/v2.1/Opportunities' + querystring, 'GET', '')
-        return self.dictToList(json.loads(text))
-    
-    def getOpportunity(self, id):
-        """
-        Gets an opportunity's details, identified by its record id, returns a dictionary
-        """
-        text = self.generateRequest('/v2.1/Opportunities/' + str(id), 'GET', '')
-        return json.loads(text)
-    
-    def getOpportunityStateHistory(self, id):
-        """
-        Gets the history of states and reasons for an opportunity.
-        """
-        text = self.generateRequest('/v2.1/Opportunities/' + str(id) + '/StateHistory', 'GET', '')
-        return self.dictToList(json.loads(text))
-    
-    def getOpportunityEmails(self, id):
-        """
-        Gets the emails linked to an opportunity
-        """
-        text = self.generateRequest('/v2.1/Opportunities/' + str(id) + '/Emails', 'GET', '')
-        return self.dictToList(json.loads(text))
-    
-    def getOpportunityNotes(self, id):
-        """
-        Gets the notes linked to an opportunity
-        """
-        text = self.generateRequest('/v2.1/Opportunities/' + str(id) + '/Notes', 'GET', '')
-        return self.dictToList(json.loads(text))
-    
-    def getOpportunityTasks(self, id):
-        """
-        Gets the tasks linked to an opportunity
-        """
-        text = self.generateRequest('/v2.1/Opportunities/' + str(id) + '/Tasks', 'GET', '')
-        return self.dictToList(json.loads(text))
-    
-    def addOpportunityCategory(self, category):
-        """
-        Add/update an opportunity category.
-        """
-        if type(category) is str:
-            if category == 'sample':
-                categories = self.getOpportunityCategories()
-                return categories[0]
-            else:
-                raise Exception('category must be a dictionary, or \'sample\' to request a sample object')
-        else:
-            if category.get('CATEGORY_ID', 0) > 0:
-                text = self.generateRequest('/v2.1/OpportunityCategories', 'PUT', json.dumps(category))
-            else:
-                text = self.generateRequest('/v2.1/OpportunityCategories', 'POST', json.dumps(category))
-            return json.loads(text)
-    
-    def deleteOpportunityCategory(self, id):
-        """
-        Deletes an opportunity category. Returns True or raises an exception.
-        """
-        text = self.generateRequest('/v2.1/OpportunityCategories/' + str(id), 'DELETE', '')
-        return True
-    
-    def getOpportunityCategory(self, id):
-        """
-        Gets an opportunity category, identified by its record id.
-        """
-        text = self.generateRequest('/v2.1/OpportunityCategories/' + str(id), 'GET', '')
-        return json.loads(text)
-    
-    def getOpportunityCategories(self):
-        """
-        Gets a list of opportunity categories.
-        """
-        text = self.generateRequest('/v2.1/OpportunityCategories', 'GET', '')
-        return self.dictToList(json.loads(text))
-    
-    def getOpportunityStateReasons(self):
-        """
-        Gets a list of opportunity state reasons, returns a list of dictionaries
-        """
-        text = self.generateRequest('/v2.1/OpportunityStateReasons', 'GET', '')
-        return self.dictToList(json.loads(text))
-    
-    def addOrganization(self, organization):
-        """
-        Add/update an organization.
-        
-        Expects a dictionary with valid fields for an organization. Returns a dictionary containing the item as stored on the server, or raises an exception.
-        
-        To request a sample item, call addOrganization('sample')
-        """
-        if type(organization) is str:
-            if organization == 'sample':
-                organizations = self.getOrganizations(top=1)
-                return organizations[0]
-            else:
-                raise Exception('The parameter organization must be a dictionary with valid fields for an organization, or the string \'sample\' to request a sample object.')
-        elif type(organization) is dict:
-            if organization.get('ORGANIZATION_ID', 0) > 0:
-                text = self.generateRequest('/v2.1/Organisations', 'PUT', json.dumps(organization))
-            else:
-                text = self.generateRequest('/v2.1/Organisations', 'POST', json.dumps(organization))
-            return json.loads(text)
-        else:
-            raise Exception('The parameter organization must be a dictionary with valid fields for an organization, or the string \'sample\' to request a sample object.')
-    
-    def deleteOrganization(self, id):
-        """
-        Delete an organization, identified by its record locator
-        """
-        text = self.generateRequest('/v2.1/Organisations/' + str(id), 'DELETE', '')
-        return True
-    
-    def getOrganizations(self, ids=None, domain=None, tag=None, top=None, skip=None, orderby=None, filters=None):
-        """
-        Gets a list of organizations, returns a list of dictionaries
-        
-        This method recognizes the OData operators:
-        
-        top = return the first N filters
-        skip = skip the first N filters
-        orderby = orderby clause, e.g. orderby='DATE_UPDATED_UTC desc'
-        filters = list of OData filter statements
-        """
-        querystring = self.ODataQuery('', top=top, skip=skip, orderby=orderby, filters=filters)
-        text = self.generateRequest('/v2.1/Organisations' + querystring, 'GET', '')
-        return self.dictToList(json.loads(text))
-        
-    def getOrganization(self, id):
-        """
-        Gets an organization, identified by its record id, returns a dictionary
-        """
-        text = self.generateRequest('/v2.1/Organisations/' + str(id), 'GET', '')
-        return json.loads(text)
-    
-    def getOrganizationEmails(self, id):
-        """
-        Gets a list of emails attached to an organization, identified by its record id, returns a list of dictionaries
-        """
-        text = self.generateRequest('/v2.1/Organisations/' + str(id) + '/Emails', 'GET', '')
-        return self.dictToList(json.loads(text))
-    
-    def getOrganizationNotes(self, id):
-        """
-        Gets a list of notes attached to an organization, identified by its record id, returns a list of dictionaries
-        """
-        text = self.generateRequest('/v2.1/Organisations/' + str(id) + '/Notes', 'GET', '')
-        return self.dictToList(json.loads(text))
-    
-    def getOrganizationTasks(self, id):
-        """
-        Gets a list of tasks attached to an organization, identified by its record id, returns a list of dictionaries
-        """
-        text = self.generateRequest('/v2.1/Organisations/' + str(id) + '/Tasks', 'GET', '')
-        return self.dictToList(json.loads(text))
-    
-    #
-    # Following are methods for pipelines
-    #
-    
-    def getPipelines(self):
-        """
-        Gets a list of pipelines
-        """
-        text = self.generateRequest('/v2.1/Pipelines', 'GET', '')
-        return self.dictToList(json.loads(text))
-    
-    def getPipeline(self, id):
-        """
-        Gets details for a pipeline, identified by its unique record id
-        """
-        text = self.generateRequest('/v2.1/Pipelines/' + str(id))
-        return json.loads(text)
-    
-    #
-    # Following are methods for obtaining pipeline stages
-    #
-    
-    def getPipelineStages(self):
-        """
-        Gets a list of pipeline stages
-        """
-        text = self.generateRequest('/v2.1/PipelineStages','GET','')
-        return self.dictToList(json.loads(text))
-    
-    def getPipelineStage(self, id):
-        """
-        Gets a pipeline stage, identified by its unique record id
-        """
-        text = self.generateRequest('/v2.1/PipelineStages/' + str(id), 'GET','')
-        return json.loads(text)
-    
-    #
-    # Following are methods for managing project categories
-    #
-    
-    def getProjectCategories(self):
-        """
-        Gets a list of project categories
-        """
-        text = self.generateRequest('/v2.1/ProjectCategories', 'GET','')
-        return self.dictToList(json.loads(text))
-    
-    def getProjectCategory(self, id):
-        """
-        Gets a project category, identified by its unique record id
-        """
-        text = self.generateRequest('/v2.1/ProjectCategories', 'GET', '')
-        return json.loads(text)
-    
-    def addProjectCategory(self, category):
-        """
-        Add/update a project category. The parameter category should be a dictionary containing the project category details, or
-        the string 'sample' to request a sample object. To add a new project category, just set the CATEGORY_ID to 0 or omit it. 
-        """
-        if type(category) is str:
-            if category == 'sample':
-                categories = self.getProjectCategories()
-                return categories[0]
-            else:
-                raise Exception('category must be a dictionary, or \'sample\' to request a sample object')
-        else:
-            if category.get('CATEGORY_ID', 0) > 0:
-                text = self.generateRequest('/v2.1/OpportunityCategories', 'PUT', json.dumps(category))
-            else:
-                text = self.generateRequest('/v2.1/OpportunityCategories', 'POST', json.dumps(category))
-            return json.loads(text)
-    
-    def deleteProjectCategory(self, id):
-        """
-        Deletes a project category, returns True if successful or raises an exception
-        """
-        text = self.generateRequest('/v2.1/ProjectCategories/' + str(id), 'DELETE', '')
-        return True
-    
-    #
-    # Following are methods use to list and manage Insightly projects
-    # 
-    
-    def addProject(self, project):
-        """
-        Add update a project. The parameter project should be a dictionary containing the project details, or
-        the string 'sample', to request a sample object. 
-        """
-        if type(project) is str:
-            if project == 'sample':
-                projects = self.getProjects(top=1)
-                return projects[0]
-            else:
-                raise Exception('project must be a dictionary containing valid project data fields, or the string \'sample\' to request a sample object')
-        else:
-            if project.get('PROJECT_ID', 0) > 0:
-                text = self.generateRequest('/v2.1/Projects', 'PUT', json.dumps(project))
-            else:
-                text = self.generateRequest('/v2.1/Projects', 'POST', json.dumps(project))
-            return json.loads(text)
-    
-    def deleteProject(self, id):
-        """
-        Deletes a project, identified by its record id. Returns True if successful, or raises an exception.
-        """
-        text = self.generateRequest('/v2.1/Projects/' + str(id), 'DELETE', '')
-        return True
-    
-    def getProject(self, id):
-        """
-        Gets a project's details, identified by its record id, returns a dictionary
-        """
-        text = self.generateRequest('/v2.1/Projects/' + str(id), 'GET', '')
-        return json.loads(text)
-    
-    def getProjects(self, top=None, skip=None, orderby=None, filters=None):
-        """
-        Gets a list of projects, returns a list of dictionaries. This method supports the OData operators:
-        
-        top = return the first N records
-        skip = skip the first N records
-        orderby = orderby clause, eg. orderby='DATE_UPDATED_UTC desc'
-        filters = list of OData filter statements
-        """
-        querystring = self.ODataQuery('', top=top, skip=skip, orderby=orderby, filters=filters)
-        text = self.generateRequest('/v2.1/Projects' + querystring, 'GET', '')
-        return self.dictToList(json.loads(text))
-    
-    def getProjectEmails(self, id):
-        """
-        Gets a list of emails attached to a project, identified by its record id, returns a list of dictionaries
-        """
-        text = self.generateRequest('/v2.1/Projects/' + str(id) + '/Emails', 'GET', '')
-        return self.dictToList(json.loads(text))
-    
-    def getProjectNotes(self, id):
-        """
-        Gets a list of notes attached to a project, identified by its record id, returns a list of dictionaries
-        """
-        text = self.generateRequest('/v2.1/Projects/' + str(id) + '/Notes', 'GET', '')
-        return self.dictToList(json.loads(text))
-    
-    def getProjectTasks(self, id):
-        """
-        Gets a list of tasks attached to a project, identified by its record id, returns a list of dictionaries
-        """
-        text = self.generateRequest('/v2.1/Projects/' + str(id) + '/Tasks', 'GET', '')
-        return self.dictToList(json.loads(text))
-    
-    #
-    # Following are methods related to relationships between contacts and organizations
-    #
-    
-    def getRelationships(self):
-        """
-        Gets a list of relationships.
-        """
-        text = self.generateRequest('/v2.1/Relationships', 'GET', '')
-        return self.dictToList(json.loads(text))
-        
-    #
-    # Following are methods related to tags
-    #
-    
-    def getTags(self, id):
-        """
-        Gets a list of tags for a parent object
-        """
-        text = self.generateRequest('/v2.1/Tags/' + str(id), 'GET', '')
-        self.dictToList(json.loads(text))
-        
-    #
-    # Following are methods related to tasks, and items attached to them
-    #
-    
-    def addTask(self, task, dummy=False):
-        """
-        Add/update a task on Insightly. Submit the task details as a dictionary.
-        
-        To get a sample dictionary, call addTask('sample')
-        
-        To add a new task to Insightly, set the TASK_ID to 0. 
-        """
-        if type(task) is str:
-            if task == 'sample':
-                tasks = self.getTasks(top=1)
-                return tasks[0]
-            else:
-                raise Exception('task must be a dictionary with valid task data fields, or the string \'sample\' to request a sample object')
-        else:
-            if task.get('TASK_ID',0) > 0:
-                text = self.generateRequest('/v2.1/Tasks', 'PUT', json.dumps(task))
-            else:
-                text = self.generateRequest('/v2.1/Tasks', 'POST', json.dumps(task))
-            return json.loads(text)
-    
-    def deleteTask(self, id):
-        """
-        Deletes a task, identified by its record ID, returns True if successful or raises an exception
-        """
-        text = self.generateRequest('/v2.1/Tasks/' + str(id), 'DELETE', '')
-        return True
-
-    def getTasks(self, ids=None, top=None, skip=None, orderby=None, filters=None):
-        """
-        Gets a list of tasks, expects the optional parameter ids, which contains a list of task ids
-        
-        This method also recognizes the OData operators:
-        
-        top = return the first N records
-        skip = skip the first N records
-        orderby = orderby statement, example 'TITLE desc'
-        filters = list of filter statements, example ['TITLE=\'Foo\'', 'BODY=\'Bar\'']
-        """
-        querystring = self.ODataQuery('', top=top, skip=skip, orderby=orderby, filters=filters)
-        if ids is not None:
-            if type(ids) is not list:
-                raise Exception('Parameter ids must be a list')
-                return
-            else:
-                querystring += '?ids='
-                for i in ids:
-                    querystring += i + ','
-        text = self.generateRequest('/v2.1/Tasks' + querystring, 'GET', '')
-        return self.dictToList(json.loads(text))
-    
-    def getTask(self, id):
-        """
-        Gets a task, identified by its record id
-        """
-        text = self.generateRequest('/v2.1/Tasks/' + str(id), 'GET', '')
-        return json.loads(text)
-    
-    def getTaskComments(self, id):
-        """
-        Gets a list of comments attached to a task, identified by its record id, returns a list of dictionaries
-        """
-        text = self.generateRequest('/v2.1/Tasks/' + str(id) + '/Comments', 'GET', '')
-        return self.dictToList(json.loads(text))
-    
-    def addTaskComment(self, id, comment):
-        """
-        Adds a comment to a task, not implemented yet.
-        """
-        pass
-    
-    #
-    # Following are methods for managing team members
-    #
-    
-    def getTeamMembers(self, id):
-        """
-        Gets a list of team members, returns a list of dictionaries
-        """
-        text = self.generateRequest('/v2.1/TeamMembers/teamid=' + str(id), 'GET', '')
-        return dictToList(json.loads(text))
-    
-    def getTeamMember(self, id):
-        """
-        Gets a team member's details
-        """
-        text = self.generateRequest('/v2.1/TeamMembers/' + str(id), 'GET', '')
-        return json.loads(text)
-    
-    def addTeamMember(self, team_member):
-        """
-        Add a team member.
-        
-        The parameter team_member should be a dictionary with valid fields, or the string 'sample' to request a sample object.
-        """
-        if type(team_member) is str:
-            if team_member == 'sample':
-                team_member = dict(
-                    PERMISSION_ID = 1,
-                    TEAM_ID=1,
-                    MEMBER_USER_ID=1,
-                    MEMBER_TEAM_ID=1,
-                )
-                return team_member
-            else:
-                raise Exception('team_member must be a dictionary with valid fields, or a string \'sample\' to request a sample object.')
-        else:
-            if type(team_member) is dict:
-                text = self.generateRequest('/v2.1/TeamMembers', 'POST', json.dumps(team_member))
-                return json.loads(text)
-            else:
-                raise Exception('team_member must be a dictionary with valid fields, or a string \'sample\' to request a sample object.')
-    
-    def deleteTeamMember(self, id):
-        """
-        Deletes a team member, identified by their record id. Returns True if successful or raises an exception
-        """
-        text = self.generateRequest('/v2.1/TeamMembers/' + str(id), 'DELETE', '')
-        return True
-    
-    def updateTeamMember(self, team_member):
-        """
-        Update a team member.
-        
-        team_member should be a dictionary with valid fields, or the string 'sample' to request a sample object
-        """
-        if type(team_member) is str:
-            if team_member == 'sample':
-                team_member = dict(
-                    PERMISSION_ID = 1,
-                    TEAM_ID=1,
-                    MEMBER_USER_ID=1,
-                    MEMBER_TEAM_ID=1,
-                )
-                return team_member
-            else:
-                raise Exception('team_member must be a dictionary with valid fields, or a string \'sample\' to request a sample object.')
-        else:
-            if type(team_member) is dict:
-                text = self.generateRequest('/v2.1/TeamMembers', 'PUT', json.dumps(team_member))
-                return json.loads(text)
-            else:
-                raise Exception('team_member must be a dictionary with valid fields, or a string \'sample\' to request a sample object.')
-    
-    # 
-    # Following are methods related to Teams 
-    # 
-    
-    def getTeams(self, top=None, skip=None, orderby=None, filters=None):
-        """
-        Gets a list of teams, returns a list of dictionaries
-        """
-        querystring = self.ODataQuery('', top=top, skip=skip, orderby=orderby, filters=filters)
-        text = self.generateRequest('/v2.1/Teams' + querystring, 'GET', '')
-        return json.loads(text)
-    
-    def getTeam(self, id):
-        """
-        Gets a team, returns a dictionary
-        """
-        text = self.generateRequest('/v2.1/Teams/' + str(id), 'GET', '')
-        return json.loads(text)
-    
-    def addTeam(self, team):
-        """
-        Add/update a team on Insightly.
-        
-        The parameter team is a dictionary containing the details and team members. To get a sample object to work with
-        just call addTeam('sample')
-        
-        NOTE: you will get a 400 error (bad request) if you do not include a valid list of team members
-        """
-        if type(team) is str:
-            if string.lower(team) == 'sample':
-                teams = self.getTeams(top=1)
-                return teams[0]
-            else:
-                raise Exception('team must be a dictionary or \'sample\' (to obtain a sample object)')
-        else:
-            if type(team) is dict:
-                urldata = json.dumps(team)
-                if team.get('TEAM_ID',0) > 0:
-                    text = self.generateRequest('/v2.1/Teams', 'PUT', urldata)
-                else:
-                    text = self.generateRequest('/v2.1/Teams', 'POST', urldata)
-                return json.loads(text)
-            else:
-                raise Exception('team must be a dictionary or \'sample\' (to obtain a sample object)')
-    
-    def deleteTeam(self, id):
-        """
-        Deletes a team, returns True if successful, or raises an exception
-        """
-        text = self.generateRequest('/v2.1/Teams/' + str(id), 'DELETE', '')
-        return True
-        
-    #
-    # Following is a list of methods for accessing user information. These methods are read-only. 
-    #
-    
-    def getUsers(self):
-        """
-        Gets a list of users for this account, returns a list of dictionaries
-        """
-        text = self.generateRequest('/v2.1/Users', 'GET', '')
-        return json.loads(text)
-    
-    def getUser(self, id):
-        """
-        Gets an individual user's details
-        """
-        text = self.generateRequest('/v2.1/Users/' + str(id), 'GET', '')
-        return json.loads(text)
+        LIMIT = '----------lImIt_of_THE_fIle_eW_$'
+        CRLF = '\r\n'
+        L = ''
+        #for (key, value) in fields:
+        #    L.append('--' + LIMIT)
+        #    L.append('Content-Disposition: form-data; name="%s"' % key)
+        #    L.append('')
+        #    L.append(value)
+        for (key, filename, value) in files:
+            L += '--' + LIMIT + '--' + CRLF
+            L += 'Content-Disposition: form-data; name="' + key + '"; filename="' + filename + '"' + CRLF
+            L += 'Content-Type: ' + self.get_content_type(filename) + CRLF
+            L += '' + CRLF
+            L += str(value) + CRLF
+        L += '--' + LIMIT + '--' + CRLF
+        L += '' + CRLF
+        body = L
+        content_type = 'multipart/form-data; boundary=%s' % LIMIT
+        return content_type, body
+    
+    def get_content_type(self,filename):
+        return mimetypes.guess_type(filename)[0] or 'application/octet-stream'

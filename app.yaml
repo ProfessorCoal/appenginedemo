@@ -1,4 +1,4 @@
-application: crmapidemo
+application: your_app_name_or_id_goes_here
 version: 1
 runtime: python27
 api_version: 1

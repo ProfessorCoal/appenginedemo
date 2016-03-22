@@ -1,12 +1,20 @@
 <h3>Welcome</h3>
 <p>Welcome to Spacely Sprockets, the worlds leading maker of space sprockets.</p>
-<p>Ipsum orum, ..............</p>
 <h3>Request More Information</h3>
-<FORM action=/requestinformation method=post class="form-group">
-<p><input type=text name=FIRST_NAME class="form-control" placeholder="First Name"></p>
-<p><input type=text name=LAST_NAME class="form-control" placeholder="Last Name"></p>
-<p><input type=text name=EMAIL class="form-control" placeholder="Email"></p>
-<p><input type=text name=PHONE class="form-control" placeholder="Phone Number"></p>
+<FORM action=/ method=post class="form-group">
+<p><input type=text name=first_name class="form-control" placeholder="First Name"></p>
+<p><input type=text name=last_name class="form-control" placeholder="Last Name"></p>
+<p><input type=text name=organisation class="form-control" placeholder="Organisation or Company"></p>
+<p><input type=text name=email class="form-control" placeholder="Email"></p>
+<p><input type=text name=phone class="form-control" placeholder="Phone Number"></p>
+<p><input type=text name=website class="form-control" placeholder="Website URL"></p>
+<p><select name=responsible_user_id class="form-control">
+    {% for u in users %}
+    <option value="{{ u.USER_ID }}">Assign To {{ u.FIRST_NAME }} {{ u.LAST_NAME }}</option>
+    {% endfor %}
+</select></p>
+<p><textarea name=comment class="form-control" rows=6 cols=80 placeholder="Remarks"></textarea></p>
 <INPUT type=hidden name=addtask value=y>
+<INPUT type=hidden name=saveas value=contact>
 <p><button class="btn btn-primary">Request More Information</button></p>
 </FORM>

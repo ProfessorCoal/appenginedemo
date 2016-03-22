@@ -1,25 +1,27 @@
 #
-# Insightly - Google App Engine Sample Code
+# Insightly - Python Sample Code
 # Brian McConnell <brian@insight.ly>
 #
 # This sample code for shows how to build webapp2 compatible apps that integrate with Insightly.
 # This will run as-is on Google App Engine for Python, and should also run on any webapp2
 # runtime environment, although you will need to replace the App Engine django templating tools
-# with the Django installation. 
+# with the Django installation. In most cases this will easily run within the free quotas for
+# App Engine, so you should be able to quickly modify this code and run it there.
 #
 # With the Python SDK you can access all of the major object types in Insightly, including:
 #
 # * Contacts
 # * Emails
+# * Events
+# * LEads
 # * Opportunities
 # * Organizations
 # * Projects
 # * Tasks
 #
-# This demo application includes a Bootstrap based sample website that enables prospective
-# customers to fill out a web form, which then imports this information into the Insightly
-# contact manager and tasks system. Some other hidden pages also demo how to read
-# information out of Insightly, for example to display a list of tasks that are coming due. 
+# The sample app displays a simple form that prompts the user for contact information
+# and then saves the information to Insightly as a contact or lead, and then creates a
+# task to remind the assigned user to follow up with the newly created contact. 
 # 
 
 import os
@@ -36,8 +38,8 @@ from google.appengine.ext.webapp import util
 # import the Insightly SDK
 from insightly import Insightly
 
-# your Insightly API key goes here
-apikey = 'your API key'
+# your Insightly API key goes here (don't share this publicly)
+apikey = ''
 
 def load_page(page, data = None):
     """
@@ -48,104 +50,155 @@ def load_page(page, data = None):
     path = os.path.join(os.path.dirname(__file__), "main.html")
     if data is not None:
         if type(data) is dict:
+            if string.count(page, '.htm') > 0 :
+                data['page'] = page
+            else:
+                data['page'] = page + '.html'
             return template.render(path, data)
-    data = dict(
-        page = page + '.html',
-    )
+    else:
+        data = dict()
+        if string.count(page, '.htm') > 0 :
+            data['page'] = page
+        else:
+            data['page'] = page + '.html'
     return template.render(path, data)
-        
-class RequestInformationHandler(webapp2.RequestHandler):
+
+def send_email(email):
     """
-    This request handler implements the request information form, and handles the POST submission
-    when the form is submitted.
-    
-    It adds the user to Insightly contacts, and also creates a task to follow up with the user. 
+    This is a dummy function to send a thank you email to the user, add hooks to an email delivery
+    service here (we recommend Mailgun)
     """
+    return True
+
+class ServePage(webapp2.RequestHandler):
     def get(self):
-        self.response.out.write(load_page('request_information'))
-    def post(self):
+        """
+        Serve the page with the data entry form to the user.
+        """
+        #
+        # load a list of Insightly users, this is used to populate the assign to droplist,
+        # to show an example of how to assign tasks to specific users.
+        #
         i = Insightly(apikey = apikey)
-        contactinfos = list()
-        if len(self.request.get('EMAIL')) > 0:
-            contactinfo = dict(
-                TYPE = 'EMAIL',
-                DETAIL = self.request.get('EMAIL'),
-            )
-            contactinfos.append(contactinfo)
-        if len(self.request.get('PHONE')) > 0:
-            contactinfo = dict(
-                TYPE = 'PHONE',
-                DETAIL = self.request.get('PHONE'),
-            )
-            contactinfos.append(contactinfo)
-        contact = dict(
-            SALUTATION = self.request.get('SALUTATION'),
-            FIRST_NAME = self.request.get('FIRST_NAME'),
-            LAST_NAME = self.request.get('LAST_NAME'),
-            CONTACTINFOS = contactinfos,
+        users = i.read('users')
+        #
+        # populate the dictionary passed into the Django template
+        #
+        data = dict(
+            page = 'request_information.html',
+            users = users,
         )
-        contact = i.addContact(contact)
+        #
+        # render and serve the page, using Django templating
+        #
+        self.response.out.write(load_page('request_information.html', data=data))
+    def post(self):
+        """
+        Process submitted form, create contact/lead and reminder task, serve response
+        """
+        #
+        # get form fields
+        #
+        first_name = self.request.get('first_name')
+        last_name = self.request.get('last_name')
+        organisation = self.request.get('organisation')
+        phone = self.request.get('phone')
+        email = self.request.get('email')
+        website = self.request.get('website')
+        comment = self.request.get('comment')
+        addtask = self.request.get('addtask')
+        saveas = self.request.get('saveas')
+        responsible_user_id = self.request.get('responsible_user_id')
+    
+        #
+        # get the hidden field saveas, which can be contact or lead,
+        # if omitted, saveas=lead
+        #
         
-        if self.request.get('addtask') == 'y':
-            tasklinks = list()
-            tl = dict(
-                TASK_LINK_ID = 0,
-                CONTACT_ID = contact['CONTACT_ID'],
-            )
-            tasklinks.append(tl)
+        if saveas != 'contact' and saveas != 'lead':
+            saveas = 'lead'
             
+        if addtask == 'y' or addtask == 'Y':
+            addtask = True
+        else:
+            addtask = False
+            
+        i = Insightly(apikey = apikey)
+        
+        if saveas == 'lead':
+            lead = dict(
+                FIRST_NAME = first_name,
+                LAST_NAME = last_name,
+                ORGANIZATION_NAME = organisation,
+                PHONE_NUMBER = phone,
+                EMAIL_ADDRESS = email,
+            )
+            i.create('leads', lead)
+        else:
+            contactinfos = list()
+            if len(phone) > 0:
+                contactinfo = dict(
+                    TYPE = 'PHONE',
+                    LABEL = 'Work',
+                    DETAIL = phone,
+                )
+                contactinfos.append(contactinfo)
+            if len(email) > 0:
+                contactinfo = dict(
+                    TYPE = 'EMAIL',
+                    LABEL = 'Work',
+                    DETAIL = email,
+                )
+                contactinfos.append(contactinfo)
+            if len(website) > 0:
+                contactinfo = dict(
+                    TYPE = 'WEBSITE',
+                    LABEL = 'Work',
+                    DETAIL = website,
+                )
+                contactinfos.append(contactinfo)
+            contact = dict(
+                FIRST_NAME = first_name,
+                LAST_NAME = last_name,
+                CONTACTINFOS = contactinfos,
+                BACKGROUND = comment,
+            )
+            i.create('contacts', contact)
+        
+        if addtask:
             task = dict(
-                Title = 'Follow up with ' + self.request.get('FIRST_NAME') + ' ' + self.request.get('LAST_NAME'),
-                PRIORITY = 2,
-                STATUS = 'NOT STARTED',
+                TITLE = 'Follow up with ' + first_name + ' ' + last_name,
+                STATUS = 'Not Started',
                 COMPLETED = False,
-                OWNER_USER_ID = i.owner_id,
-                VISIBLE_TO = 'EVERYONE',
                 PUBLICLY_VISIBLE = True,
-                RESPONSIBLE_USER_ID = i.owner_id,
-                TASKLINKS = tasklinks,
+                DETAILS = comment,
             )
-            task = i.addTask(task)
-        self.redirect('/thankyou')
-            
-class ProjectsHandler(webapp2.RequestHandler):
-    """
-    This hidden request handler displays up to 50 projects in an unordered list. 
-    """
-    def get(self):
-        i = Insightly(apikey = apikey)
-        projects = i.getProjects(top=50)
-        if len(projects) > 0:
-            self.response.out.write('<ul>')
-            for p in projects:
-                self.response.out.write('<li>' + str(p.get('PROJECT_NAME','')))
-            self.response.out.write('</ul>')
+            if len(responsible_user_id) > 0:
+                task['RESPONSIBLE_USER_ID'] = int(responsible_user_id)
+            i.create('tasks', task)
         
-class TasksHandler(webapp2.RequestHandler):
-    """
-    This is a simple request handler that displays a list of upcoming tasks. 
-    """
-    def get(self):
-        i = Insightly(apikey = apikey)
-        tasks = i.getTasks(top=25, orderby='DUE_DATE desc')
-        if len(tasks) > 0:
-            self.response.out.write('<ul>')
-            for t in tasks:
-                self.response.out.write('<li>' + t.get('Title','No title') + ' Due: ' + t.get('DUE_DATE','') + '</li>')
-            self.response.out.write('</ul>')
-            
-class PageHandler(webapp2.RequestHandler):
-    """
-    This is a generic request handler that serves pages to the path /nnnn, where the file merged into the master template
-    is nnnn.html (see requestinformation.html for an example)
-    """
-    def get(self, page=''):
-        self.response.out.write(load_page(page))
+        data = dict(
+            first_name = first_name,
+            last_name = last_name,
+            organisation = organisation,
+            phone = phone,
+            email = email,
+            website = website,
+        )
+        
+        #
+        # render and serve the response page
+        #
+        
+        self.response.out.write(load_page('thank_you.html', data = data))
+        
+        #
+        # create and send an email to the user
+        #
+        
+        if len(email) > 0 and string.count(email, '@') > 0:
+            send_email(email)
+        
 
 app = webapp2.WSGIApplication([
-    ('/', RequestInformationHandler),
-    ('/projects', ProjectsHandler),
-    ('/requestinformation', RequestInformationHandler),
-    ('/tasks', TasksHandler),
-    (r'/(.*)', PageHandler)
-], debug=True)
+    ('/', ServePage)], debug=True)
