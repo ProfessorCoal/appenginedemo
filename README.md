@@ -3,21 +3,28 @@ appenginedemo
 
 Sample Insightly + Google App Engine Integration
 
-This sample app demonstrates how to integrate Insightly into Google App Engine projects. App Engine is an easy to use, yet highly scalable PaaS (platform as a service) environment. Unlike conventional colocation and virtual server environments (like AWS), App Engine virtually eliminates system administration and capacity planning for your projects.
+This sample application implements a smart lead capture form which you can add to your website.
 
-You simply upload your Python code and a few configuration files, and App Engine provisions the resources needed to meet end user demand, and scales in real-time to match capacity with demand. 
+The application does the following:
 
-The sample add implements a simple Twitter Bootstrap website with some sample content and a form to request more information. When you submit ther request for information form, it adds the person to your Insightly Contacts, and also creates a task to follow up with the user. Also included are some hidden pages that display upcoming tasks, recent projects, and so on. 
+* Displays a form the user fills in with their name, email, etc
+* When the form is submitted, creates either a lead or contact using the data submitted
+* Optionally creates a task, to remind a user to follow up with the prospect
+* Displays a thank you message upon successful form submission
+* Also includes hooks to dummy functions to send a thank you email and to do spam filtering
+
+While this is a fairly simple demo program it will get you started and is easy to modify and
+extend as needed. The program will run "out of the box" on Google App Engine, Google's popular
+and easy to use cloud computing platform, and unless you expect a really high volume of submissions
+should easily run within Google's free quota for the service.
 
 Getting Started
 ===============
 
-* Create an application slot on App Engine for this project
-* Download the project and unpack it into a local directory
-* In the App Engine launcher app, select Add Existing Application
-* Select the directory you extracted the project to
-* Edit app.yaml to reference your apps slot name
-* Click on Deploy
-* Go to yourapp.appspot.com
+* Create a new App Engine project and local working directory for your project
+* Copy the files into the directory
+* Open main.py, and insert your API key in the variable api_key
+* Open app.yaml and change the application name (in the first line in the config file) to your project name or ID
+* Deploy the code to App Engine, and open the url https://your_app_name_or_id.appspot.com
 
-You should see the home page and request information form.
+That's all there is to it. If you have any questions, submit a support ticket at https://support.insight.ly
