@@ -70,6 +70,14 @@ def send_email(email):
     """
     return True
 
+def spam_test(ip_address, text):
+    """
+    This is a dummy function to test if the form was submitted by a spambot. The Akismet service is
+    a good way to do this. So insert a hook to your favorite spam/bot detection service here. Return
+    True if the submission is flagged as spam.
+    """
+    return False
+
 class ServePage(webapp2.RequestHandler):
     def get(self):
         """
@@ -109,12 +117,25 @@ class ServePage(webapp2.RequestHandler):
         addtask = self.request.get('addtask')
         saveas = self.request.get('saveas')
         responsible_user_id = self.request.get('responsible_user_id')
+        
+        #
+        # This is a good place to check for spam/bot submissions using Akismet
+        # or a captcha test like ReCaptcha. If the lead or contact is flagged as
+        # spam, add a tag "spam". This way the user can decide keep or discard
+        # these entries at their discretion, while easily flagged suspect entries
+        # for review.
+        #
+        ip_address = self.request.remote_addr
+        
+        this_is_spam = spam_test(ip_address, comment)
+        tags = list()
+        if this is spam:
+            tags.append({'TAG_NAME':'spam'})
     
         #
         # get the hidden field saveas, which can be contact or lead,
         # if omitted, saveas=lead
         #
-        
         if saveas != 'contact' and saveas != 'lead':
             saveas = 'lead'
             
@@ -132,6 +153,7 @@ class ServePage(webapp2.RequestHandler):
                 ORGANIZATION_NAME = organisation,
                 PHONE_NUMBER = phone,
                 EMAIL_ADDRESS = email,
+                TAGS = tags,
             )
             i.create('leads', lead)
         else:
@@ -162,6 +184,7 @@ class ServePage(webapp2.RequestHandler):
                 LAST_NAME = last_name,
                 CONTACTINFOS = contactinfos,
                 BACKGROUND = comment,
+                TAGS = tags,
             )
             i.create('contacts', contact)
         
